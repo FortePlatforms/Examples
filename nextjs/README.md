@@ -17,11 +17,13 @@ bun dev
 
 Open <http://localhost:3000>, sign up with either tab, and you'll land on the dashboard.
 
-Get `FORTE_PROJECT_ID` and `FORTE_API_TOKEN` from the Forte dashboard (Project → API tokens).
+Get `FORTE_PROJECT_ID` and `FORTE_API_TOKEN` from the Forte dashboard (Project → API tokens). If any client component reads the project ID, also set `NEXT_PUBLIC_FORTE_PROJECT_ID` in `.env.local` so Next.js inlines it into the browser bundle — in production Forte sets it for you.
 
 ## Deploy to Forte
 
-Point Forte at this directory. You **do not** need to set `FORTE_API_TOKEN` or `FORTE_PROJECT_ID` — they're provided to your service automatically. Once deployed, the Forte gateway authenticates incoming requests and forwards them to this app with `X-Forte-User-Id` set, which is what `proxy.ts` reads.
+Point Forte at this directory. `FORTE_PROJECT_ID` and `FORTE_WEB_APP_ID` are provided to your website automatically — both as the canonical names *and* as `NEXT_PUBLIC_FORTE_PROJECT_ID` / `NEXT_PUBLIC_FORTE_WEB_APP_ID` so they reach Next.js client components without extra config. `FORTE_API_TOKEN` is **not** auto-injected for websites to prevent unintended security vulnerabilities; set it as a Secret on the website's edit page if your server-side code needs it.
+
+Once deployed, the Forte gateway authenticates incoming requests and forwards them to this app with `X-Forte-User-Id` set, which is what `proxy.ts` reads.
 
 ## How Forte is wired in
 
