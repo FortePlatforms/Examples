@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Forte Next.js Example",
-  description: "Example Next.js app using the Forte SDK for user authentication and profile.",
+  title: "Forte Frontend (Website) Example",
+  description:
+    "A Forte website (frontend only) that signs users in with the Forte SDK and calls a separate Forte service for everything that needs the server-side API.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

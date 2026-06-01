@@ -1,18 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ForteClient, type LoginUserResponse } from "@forteplatforms/sdk";
+import { setSessionToken } from "@/lib/session";
 
-// The login page is the one place where SDK calls happen *in the browser*.
-// On success we hand the session token to /api/auth/local-bridge so the
-// middleware can authenticate same-origin requests in local development.
-//
-// In production behind the Forte gateway, Forte also sets its own session
-// cookie scoped to the parent domain on the response from the SDK call — so
-// the gateway will see authenticated requests on subsequent navigations and
-// inject X-Forte-User-Id automatically.
-
+// Login is the one place that talks to Forte directly from the browser, using the end-user
+// API (`forte.users.*`). No API token is involved. On success we keep the returned session
+// token and forward it to our backend service on subsequent calls.
 const forte = new ForteClient();
 
 type Tab = "password" | "otp";
@@ -29,25 +24,18 @@ function LoginPageInner() {
   const router = useRouter();
   const search = useSearchParams();
   const next = search.get("next") ?? "/dashboard";
-
-  const [projectId, setProjectId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("password");
 
-  useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((d) => setProjectId(d.projectId ?? null));
-  }, []);
+  // In production NEXT_PUBLIC_FORTE_PROJECT_ID is injected by Forte; locally it comes from
+  // .env.local. When it's missing we render a clear message instead of the forms.
+  const projectId = process.env.NEXT_PUBLIC_FORTE_PROJECT_ID;
 
-  async function persistSession(login: LoginUserResponse) {
-    await fetch("/api/auth/local-bridge", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionToken: login.sessionToken.sessionToken,
-        expirationTime: login.sessionToken.expirationTime,
-      }),
-    });
+  function onSuccess(login: LoginUserResponse) {
+    const token = login.sessionToken?.sessionToken;
+    if (!token) {
+      return;
+    }
+    setSessionToken(token);
     router.push(next);
   }
 
@@ -55,7 +43,8 @@ function LoginPageInner() {
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
       <h1 className="text-2xl font-semibold">Sign in</h1>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-        This example demonstrates calling the Forte SDK from the browser. Pick a tab to try either flow.
+        This website calls the Forte SDK from the browser to sign you in, then talks to a
+        separate backend service for everything else.
       </p>
 
       <div className="mt-8 flex gap-1 rounded-lg bg-neutral-200/60 p-1 dark:bg-neutral-800">
@@ -69,13 +58,11 @@ function LoginPageInner() {
 
       <div className="mt-6">
         {!projectId ? (
-          <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-            Loading project configuration…
-          </div>
+          <ErrorMessage message="NEXT_PUBLIC_FORTE_PROJECT_ID is not set. On Forte it is injected into your website automatically; locally, set it in .env.local." />
         ) : tab === "password" ? (
-          <PasswordForm projectId={projectId} onSuccess={persistSession} />
+          <PasswordForm projectId={projectId} onSuccess={onSuccess} />
         ) : (
-          <OtpForm projectId={projectId} onSuccess={persistSession} />
+          <OtpForm projectId={projectId} onSuccess={onSuccess} />
         )}
       </div>
     </main>
@@ -196,17 +183,17 @@ function OtpForm({
     setBusy(true);
     setError(null);
     try {
-      // Register first (idempotent for already-existing users in this flow).
+      // Register first so a brand-new email can sign in; ignore "already exists".
       try {
         await forte.users.registerUser({ projectId, registerUserRequest: { email } });
       } catch {
-        // Ignore — user may already exist; we'll continue to OTP.
+        // User may already exist; continue to OTP.
       }
       const { pendingLoginId: id } = await forte.users.createOtpLogin({
         projectId,
         createOtpLoginRequest: { email },
       });
-      setPendingLoginId(id);
+      setPendingLoginId(id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't send code");
     } finally {
@@ -289,7 +276,9 @@ function OtpForm({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+        {label}
+      </span>
       {children}
     </label>
   );

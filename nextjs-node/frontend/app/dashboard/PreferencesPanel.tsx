@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import type { UserObject } from "@forteplatforms/sdk";
+import { backendFetch } from "@/lib/api";
 
 type Attrs = Record<string, unknown>;
 
 export default function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
   const [attrs, setAttrs] = useState<Attrs>(initialAttributes);
-  const [favoriteColor, setFavoriteColor] = useState<string>(String(initialAttributes.favoriteColor ?? ""));
+  const [favoriteColor, setFavoriteColor] = useState<string>(
+    String(initialAttributes.favoriteColor ?? ""),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,7 +20,7 @@ export default function PreferencesPanel({ initialAttributes }: { initialAttribu
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/me/attributes", {
+      const res = await backendFetch("/api/me/attributes", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(patch),
