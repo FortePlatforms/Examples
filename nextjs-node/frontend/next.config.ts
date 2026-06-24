@@ -1,12 +1,8 @@
 import type { NextConfig } from "next";
 
-// `output: "export"` produces a purely static site — there is no server runtime at all.
-// That is deliberate: this app is deployed as a Forte *website* (frontend only). With no
-// server, there is nowhere a project-owner secret like FORTE_API_TOKEN could live, which is
-// exactly the guarantee a website should make. All privileged work happens in the backend
-// service. See the README.
+// This project is an SSR application and can be deployed as a Forte Website.
+// However, backend resources should be deployed as Forte Services -- so it's wise to duplicate or separate the backend/frontend deployments on Forte.
 const nextConfig: NextConfig = {
-  output: "export",
 };
 
 export default nextConfig;
