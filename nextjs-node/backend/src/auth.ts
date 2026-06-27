@@ -28,10 +28,10 @@ export async function resolveUserId(req: Request): Promise<string | null> {
     try {
       // No API token: this is a user-facing call authenticated by the session token itself.
       const forte = new ForteClient();
-      const account = await forte.users.getAccount(
-        { projectId: getProjectId() },
-        { headers: { Authorization: authorization } },
-      );
+      const account = await forte.users.getAccount({
+        projectId: getProjectId(),
+        authorization,
+      });
       return account.userId ?? null;
     } catch {
       return null;
