@@ -26,9 +26,10 @@ function LoginPageInner() {
   const next = search.get("next") ?? "/dashboard";
   const [tab, setTab] = useState<Tab>("password");
 
-  // In production NEXT_PUBLIC_FORTE_PROJECT_ID is injected by Forte; locally it comes from
-  // .env.local. When it's missing we render a clear message instead of the forms.
-  const projectId = process.env.NEXT_PUBLIC_FORTE_PROJECT_ID;
+  // In production FORTE_PROJECT_ID is injected by Forte; locally it comes from .env.local.
+  // When it's missing we render a clear message instead of the forms. (Read directly rather
+  // than via getProjectId() because that throws, and this page's job is to explain the problem.)
+  const projectId = process.env.FORTE_PROJECT_ID;
 
   function onSuccess(login: LoginUserResponse) {
     const token = login.sessionToken?.sessionToken;
@@ -58,7 +59,7 @@ function LoginPageInner() {
 
       <div className="mt-6">
         {!projectId ? (
-          <ErrorMessage message="NEXT_PUBLIC_FORTE_PROJECT_ID is not set. On Forte it is injected into your website automatically; locally, set it in .env.local." />
+          <ErrorMessage message="FORTE_PROJECT_ID is not set. On Forte it is injected into your website automatically; locally, set it in .env.local." />
         ) : tab === "password" ? (
           <PasswordForm projectId={projectId} onSuccess={onSuccess} />
         ) : (

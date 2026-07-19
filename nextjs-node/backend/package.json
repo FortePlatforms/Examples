@@ -9,12 +9,14 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@forteplatforms/sdk": "^1.0.176",
-    "express": "^5.1.0"
+    "@forteplatforms/sdk": "^1.0.320",
+    "express": "^5.1.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/node": "^24",
+    "@types/pg": "^8.11.0",
     "tsx": "^4.20.0",
     "typescript": "^5"
   }

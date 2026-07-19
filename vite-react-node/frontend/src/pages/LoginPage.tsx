@@ -16,9 +16,10 @@ export default function LoginPage() {
   const next = search.get("next") ?? "/dashboard";
   const [tab, setTab] = useState<Tab>("password");
 
-  // In production VITE_FORTE_PROJECT_ID is injected by Forte; locally it comes from .env.local.
-  // When it's missing we render a clear message instead of the forms.
-  const projectId = import.meta.env.VITE_FORTE_PROJECT_ID;
+  // In production FORTE_PROJECT_ID is injected by Forte; locally it comes from .env.local.
+  // When it's missing we render a clear message instead of the forms. (Read directly rather
+  // than via getProjectId() because that throws, and this page's job is to explain the problem.)
+  const projectId = import.meta.env.FORTE_PROJECT_ID;
 
   function onSuccess(login: LoginUserResponse) {
     const token = login.sessionToken?.sessionToken;
@@ -57,7 +58,7 @@ export default function LoginPage() {
       <div className="tab-body">
         {!projectId ? (
           <div className="error">
-            VITE_FORTE_PROJECT_ID is not set. On Forte it is injected into your website
+            FORTE_PROJECT_ID is not set. On Forte it is injected into your website
             automatically; locally, set it in .env.local.
           </div>
         ) : tab === "password" ? (

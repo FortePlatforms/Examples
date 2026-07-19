@@ -8,12 +8,16 @@ import { ForteClient } from "@forteplatforms/sdk";
 // lives in the backend service. See the README.
 export const forte = new ForteClient();
 
+// FORTE_PROJECT_ID is the canonical name Forte injects — into services, and into websites at
+// build time. Reading it here (rather than a VITE_ alias) means the same variable name works
+// across this website and the backend service. It reaches the browser bundle because
+// vite.config.ts adds FORTE_ to `envPrefix`; see the comment there.
 export function getProjectId(): string {
-  const projectId = import.meta.env.VITE_FORTE_PROJECT_ID;
+  const projectId = import.meta.env.FORTE_PROJECT_ID;
   if (!projectId) {
     throw new Error(
-      "VITE_FORTE_PROJECT_ID is not set. On Forte it is injected into your website " +
-        "automatically; locally, set it in .env.local.",
+      "FORTE_PROJECT_ID is not set. On Forte it is injected into your website automatically; " +
+        "locally, set it in .env.local.",
     );
   }
   return projectId;

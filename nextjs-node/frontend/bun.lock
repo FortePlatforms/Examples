@@ -5,7 +5,7 @@
     "": {
       "name": "forte-example-frontend",
       "dependencies": {
-        "@forteplatforms/sdk": "^1.0.176",
+        "@forteplatforms/sdk": "^1.0.320",
         "next": "16.1.4",
         "react": "19.2.3",
         "react-dom": "19.2.3",
@@ -25,7 +25,7 @@
 
     "@emnapi/runtime": ["@emnapi/runtime@1.10.0", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA=="],
 
-    "@forteplatforms/sdk": ["@forteplatforms/sdk@1.0.176", "", {}, "sha512-pJrdzHHfHo4nYiE8hEim20ayydWXwbTjSxAPFvU5oe8UKE1Ud48d2NFbNPk+wLZMiQxaZmtr7TNuDYTDnGywLw=="],
+    "@forteplatforms/sdk": ["@forteplatforms/sdk@1.0.320", "", {}, "sha512-D9xv3n1D5MgapI4rtj6ad343VilJ7SAmX61sRcbo2qks5OpG5F9Dx6qC3/bS8mzHbwzFpIbXZ2NQLU2FSEWBEg=="],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 

@@ -113,7 +113,7 @@ npm run dev                 # listens on http://localhost:8080
 
 ```bash
 cd frontend
-cp .env.example .env.local  # set VITE_FORTE_PROJECT_ID; VITE_BACKEND_URL defaults to :8080
+cp .env.example .env.local  # set FORTE_PROJECT_ID; VITE_BACKEND_URL defaults to :8080
 npm install
 npm run dev                 # opens http://localhost:5173
 ```
@@ -121,8 +121,10 @@ npm run dev                 # opens http://localhost:5173
 Open <http://localhost:5173>, sign in with either tab, and you'll land on the dashboard. Get
 `FORTE_API_TOKEN` and your project ID from the Forte dashboard (Project → API tokens).
 
-> Vite only exposes variables prefixed with `VITE_` to the browser bundle, which is why the public
-> values are named `VITE_FORTE_PROJECT_ID` and `VITE_BACKEND_URL`.
+> Vite only exposes *prefixed* variables to the browser bundle — by default just `VITE_`. This app
+> adds `FORTE_` to `envPrefix` in `vite.config.ts` so it can read `FORTE_PROJECT_ID`, the canonical
+> name Forte injects, rather than a Vite-specific alias. Your own values still use `VITE_`
+> (`VITE_BACKEND_URL`).
 
 ## Deploy to Forte
 
@@ -138,7 +140,7 @@ forte services create <projectId> \
   --env FRONTEND_ORIGIN=https://<your-website>.sites.tryforte.dev
 
 # Frontend → a website. Vite builds to dist/ (Forte detects this) and FORTE_PROJECT_ID is injected
-# automatically, including as VITE_FORTE_PROJECT_ID so the browser bundle can read it.
+# automatically; vite.config.ts exposes it to the browser bundle via envPrefix.
 forte websites create <projectId> \
   --name my-app-frontend \
   --repo <githubHttpsUrl> --branch main \

@@ -8,12 +8,17 @@ import { ForteClient } from "@forteplatforms/sdk";
 // lives in the backend service. See the README.
 export const forte = new ForteClient();
 
+// FORTE_PROJECT_ID is the canonical name Forte injects — into services, and into websites at
+// build time. Reading it here (rather than a NEXT_PUBLIC_ alias) means the same variable name
+// works across this website and the backend service. It reaches the browser bundle because
+// next.config.ts lists it under `env`; see the comment there for why that is safe for this
+// value and not for others.
 export function getProjectId(): string {
-  const projectId = process.env.NEXT_PUBLIC_FORTE_PROJECT_ID;
+  const projectId = process.env.FORTE_PROJECT_ID;
   if (!projectId) {
     throw new Error(
-      "NEXT_PUBLIC_FORTE_PROJECT_ID is not set. On Forte it is injected into your website " +
-        "automatically; locally, set it in .env.local.",
+      "FORTE_PROJECT_ID is not set. On Forte it is injected into your website automatically; " +
+        "locally, set it in .env.local.",
     );
   }
   return projectId;

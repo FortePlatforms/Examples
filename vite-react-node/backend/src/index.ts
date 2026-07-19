@@ -1,3 +1,5 @@
+// First, so .env is loaded before any module below reads process.env at import time.
+import "./env.js";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { forte, getProjectId } from "./forte.js";

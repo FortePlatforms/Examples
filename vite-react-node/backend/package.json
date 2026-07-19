@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@forteplatforms/sdk": "^1.0.176",
+    "@forteplatforms/sdk": "^1.0.320",
     "express": "^5.1.0"
   },
   "devDependencies": {

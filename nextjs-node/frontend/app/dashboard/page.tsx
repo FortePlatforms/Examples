@@ -7,6 +7,7 @@ import { forte, getProjectId } from "@/lib/forte-browser";
 import { backendFetch } from "@/lib/api";
 import { getSessionToken, clearSessionToken } from "@/lib/session";
 import PreferencesPanel from "./PreferencesPanel";
+import NotesPanel from "./NotesPanel";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -124,6 +125,24 @@ export default function DashboardPage() {
         <PreferencesPanel
           initialAttributes={(user.customMetadataAttributes ?? {}) as Record<string, unknown>}
         />
+      </section>
+
+      <section className="mt-10 space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-500">
+          Notes (Postgres)
+        </h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          The attributes above live on your Forte user record — a flat map of settings. Notes are
+          rows in a <strong>Forte managed Postgres</strong> database attached to the service:{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">GET</code>,{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">POST</code>,{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">PATCH</code> and{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">DELETE</code> on{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">/api/notes</code>.
+          Every one of those queries is scoped to your user id in SQL, so the notes below are yours
+          and only yours.
+        </p>
+        <NotesPanel />
       </section>
     </main>
   );

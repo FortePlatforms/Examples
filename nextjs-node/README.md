@@ -5,8 +5,8 @@ A runnable example showing the recommended shape for a Forte app with a real bac
 - **`frontend/`** — a Next.js app deployed as a Forte **website**. Frontend only. It signs users
   in with the Forte SDK in the browser, then calls the backend for anything privileged.
 - **`backend/`** — a Node/Express app deployed as a Forte **service**. It holds the server-side
-  `FORTE_API_TOKEN`, reads the authenticated user the Forte gateway injects, and uses the
-  server-side Forte API.
+  `FORTE_API_TOKEN`, reads the authenticated user the Forte gateway injects, uses the
+  server-side Forte API, and stores per-user data in a Forte **managed Postgres** database.
 
 The two pieces are deployed separately and talk over HTTP.
 
@@ -68,8 +68,39 @@ handling, or observability, it belongs in a **service** — not a website.
 | `frontend/lib/session.ts` | Keeps the returned session token in `sessionStorage`. |
 | `frontend/lib/api.ts` | `backendFetch()` — calls the service with the session token as a Bearer header. |
 | `backend/src/auth.ts` | Resolves the user: trusts `X-Forte-User-Id` in production, falls back to validating the Bearer token locally. |
-| `backend/src/index.ts` | Express service: CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`. |
+| `backend/src/index.ts` | Express service: CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`, and `/api/notes` CRUD. |
 | `backend/src/forte.ts` | The single server-side `ForteClient` (auto-reads `FORTE_API_TOKEN`). |
+| `backend/src/db.ts` | The Postgres pool: reads `DATABASE_URL`, handles idle-client errors, creates the schema on boot. |
+| `frontend/app/dashboard/NotesPanel.tsx` | The CRUD UI. Note that it never sends a user id — the service derives it. |
+
+## Why Postgres and not user metadata
+
+The dashboard shows both, deliberately, because the line between them is the thing worth learning.
+
+**Preferences** are stored in the user's `customMetadataAttributes` — a flat map of strings hanging
+off one Forte user record. Perfect for a handful of settings: a theme, a favorite color, a counter.
+No schema, no extra infrastructure, and it travels with the user.
+
+**Notes** are rows. There are many per user, you list them in an order, you edit and delete them
+individually, and one day you'll want to search them. That is a database, and trying to model it as
+a metadata map means encoding a list into a string and re-parsing it on every read.
+
+The rough test: if you'd ever want to write `WHERE`, `ORDER BY`, or `COUNT`, you want Postgres.
+
+### One rule the service follows everywhere
+
+Every SQL statement in `backend/src/index.ts` filters on `user_id` — **writes included**, not just
+reads:
+
+```sql
+UPDATE notes SET body = $1 WHERE id = $2 AND user_id = $3
+```
+
+The `AND user_id = $3` is the part that matters. The Forte user id from the gateway is the tenant
+key, so a note id on its own is never enough to address a row. If the update matched on `id` alone,
+any signed-in user could edit anyone else's note by guessing a number. Written this way, someone
+else's note simply matches no rows and comes back as a 404 — it is never loaded and never compared,
+so there is no check to forget.
 
 > **Bearer token vs. first-party cookie.** This example sends the session token as a Bearer header —
 > the simplest cross-origin transport, and it works regardless of domains. If you'd rather keep the
@@ -82,7 +113,17 @@ handling, or observability, it belongs in a **service** — not a website.
 There's no Forte gateway in front of `localhost`, so the backend validates the Bearer token directly
 (see `backend/src/auth.ts`) — the same result the gateway gives you in production.
 
-**1. Start the backend (service):**
+**1. Start Postgres:**
+
+```bash
+docker run -d --name forte-example-pg \
+  -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
+```
+
+Any Postgres will do — this is just the shortest path to one. The service creates its table on
+startup, so there's no migration step.
+
+**2. Start the backend (service):**
 
 ```bash
 cd backend
@@ -91,17 +132,25 @@ bun install                 # or: npm install
 bun run dev                 # listens on http://localhost:8080
 ```
 
-**2. Start the frontend (website):**
+`.env.example` already points `DATABASE_URL` at the container above. The backend loads `.env` with
+Node's built-in `process.loadEnvFile()` (see `backend/src/env.ts`) — no dotenv dependency.
+
+**3. Start the frontend (website):**
 
 ```bash
 cd frontend
-cp .env.example .env.local  # set NEXT_PUBLIC_FORTE_PROJECT_ID; NEXT_PUBLIC_BACKEND_URL defaults to :8080
+cp .env.example .env.local  # set FORTE_PROJECT_ID; NEXT_PUBLIC_BACKEND_URL defaults to :8080
 bun install                 # or: npm install
 bun run dev                 # opens http://localhost:3000
 ```
 
 Open <http://localhost:3000>, sign in with either tab, and you'll land on the dashboard. Get
 `FORTE_API_TOKEN` and your project ID from the Forte dashboard (Project → API tokens).
+
+> Next.js only inlines `NEXT_PUBLIC_*` variables into browser code. This app reads
+> `FORTE_PROJECT_ID` — the canonical name Forte injects, and the same one the backend service uses —
+> by listing it under `env` in `next.config.ts`. Only do that for values that are safe to publish; a
+> project id names the project and authorizes nothing.
 
 ## Deploy to Forte
 
@@ -124,8 +173,25 @@ forte websites create <projectId> \
   --env NEXT_PUBLIC_BACKEND_URL=https://<your-backend-service>.tryforte.dev
 ```
 
+Then give the service a database — this part is done in the console, since databases have no CLI yet:
+
+1. **Project → Databases → Create database**, pick Postgres, and wait for it to go **Active**.
+2. Open it, choose **Connect to a service**, and pick the backend service.
+3. Leave the environment variable as `DATABASE_URL` (the default) and confirm.
+
+Forte creates a dedicated Postgres role for that service, sets `DATABASE_URL` on it, and redeploys.
+You never see or copy the password, and it is never returned by the API — the service is simply
+started with the variable already set. Disconnecting reverses all of it: the role is dropped and the
+variable removed.
+
+If your app reads discrete variables instead of a URL, map those instead — the connect dialog lets
+you set any of host, port, database, username and password by name, and Forte suggests the ones your
+framework expects.
+
 Notes:
 - `--auth-exclude /health` lets Forte's health check reach the service without a logged-in user.
+  This example's `/health` runs `SELECT 1`, so a broken database fails the health check and the
+  deploy rolls back instead of going live broken.
 - Set the website's `NEXT_PUBLIC_BACKEND_URL` to the **service** URL, and the service's
   `FRONTEND_ORIGIN` to the **website** URL (used for CORS).
 - See the [Monorepo guide](https://forteplatforms.com/docs/guides/monorepo) for deploying both from
