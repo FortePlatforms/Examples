@@ -55,8 +55,9 @@ handling, or observability, it belongs in a **service** — not a website.
 1. **Login happens in the browser** with the end-user API (`forte.users.*`). No API token is
    involved; the user authenticates themselves. Login returns a **session token**.
 2. **The browser calls the backend service** with that token in an `Authorization: Bearer` header.
-   In production the Forte gateway validates it, then forwards the request to the service with a
-   trusted `X-Forte-User-Id` header (it strips any client-set `X-Forte-*` headers first).
+   The Forte gateway validates it, then forwards the request to the service with a trusted
+   `X-Forte-User-Id` header (it strips any client-set `X-Forte-*` headers first). Locally,
+   `forte proxy` stands in for the gateway and does exactly the same thing.
 3. **The service does the privileged work** — it reads `X-Forte-User-Id` to know who's calling and
    uses its `FORTE_API_TOKEN` to call `forte.projects.*`.
 
@@ -67,7 +68,7 @@ handling, or observability, it belongs in a **service** — not a website.
 | `frontend/app/login/page.tsx` | Browser SDK: `new ForteClient()` (no token), then `users.registerUser` / `users.passwordLogin` / `users.createOtpLogin` / `users.completeOtpLogin`. |
 | `frontend/lib/session.ts` | Keeps the returned session token in `sessionStorage`. |
 | `frontend/lib/api.ts` | `backendFetch()` — calls the service with the session token as a Bearer header. |
-| `backend/src/auth.ts` | Resolves the user: trusts `X-Forte-User-Id` in production, falls back to validating the Bearer token locally. |
+| `backend/src/auth.ts` | Resolves the user from the trusted `X-Forte-User-Id` header the gateway injects. Run `forte proxy` locally to get the same header. |
 | `backend/src/index.ts` | Express service: CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`, and `/api/notes` CRUD. |
 | `backend/src/forte.ts` | The single server-side `ForteClient` (auto-reads `FORTE_API_TOKEN`). |
 | `backend/src/db.ts` | The Postgres pool: reads `DATABASE_URL`, handles idle-client errors, creates the schema on boot. |
@@ -110,8 +111,14 @@ so there is no check to forget.
 
 ## Run locally
 
-There's no Forte gateway in front of `localhost`, so the backend validates the Bearer token directly
-(see `backend/src/auth.ts`) — the same result the gateway gives you in production.
+The backend trusts the `X-Forte-User-Id` header the Forte gateway injects — it does no token
+validation of its own. Locally there's no gateway, so you run **`forte proxy`** in front of the
+backend: it authenticates each request against Forte and forwards it with the same
+`X-Forte-User-Id` header, exactly like production. The proxy listens on `:8080` (the port the
+frontend already targets) and forwards to the backend on `:8081`.
+
+You need a Forte project and service first (see **Deploy to Forte** below) so the proxy has
+something to authenticate against.
 
 **1. Start Postgres:**
 
@@ -129,22 +136,32 @@ startup, so there's no migration step.
 cd backend
 cp .env.example .env        # fill in FORTE_API_TOKEN and FORTE_PROJECT_ID
 bun install                 # or: npm install
-bun run dev                 # listens on http://localhost:8080
+bun run dev                 # listens on http://localhost:8081
 ```
 
-`.env.example` already points `DATABASE_URL` at the container above. The backend loads `.env` with
-Node's built-in `process.loadEnvFile()` (see `backend/src/env.ts`) — no dotenv dependency.
+`.env.example` already points `DATABASE_URL` at the container above and sets `PORT=8081`. The backend
+loads `.env` with Node's built-in `process.loadEnvFile()` (see `backend/src/env.ts`) — no dotenv
+dependency.
 
-**3. Start the frontend (website):**
+**3. Start `forte proxy` in front of the backend:**
+
+```bash
+forte proxy --project-id <projectId> --service-id <serviceId> -p 8081
+                            # authenticates each request, forwards to the backend on :8081,
+                            # and listens on http://localhost:8080
+```
+
+**4. Start the frontend (website):**
 
 ```bash
 cd frontend
-cp .env.example .env.local  # set FORTE_PROJECT_ID; NEXT_PUBLIC_BACKEND_URL defaults to :8080
+cp .env.example .env.local  # set FORTE_PROJECT_ID; NEXT_PUBLIC_BACKEND_URL defaults to :8080 (the proxy)
 bun install                 # or: npm install
 bun run dev                 # opens http://localhost:3000
 ```
 
-Open <http://localhost:3000>, sign in with either tab, and you'll land on the dashboard. Get
+Open <http://localhost:3000>, sign in with either tab, and you'll land on the dashboard. The browser
+talks to the proxy on `:8080`, which authenticates and forwards to the backend on `:8081`. Get
 `FORTE_API_TOKEN` and your project ID from the Forte dashboard (Project → API tokens).
 
 > Next.js only inlines `NEXT_PUBLIC_*` variables into browser code. This app reads

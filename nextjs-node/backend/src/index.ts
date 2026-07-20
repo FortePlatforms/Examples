@@ -3,7 +3,7 @@ import "./env.js";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { forte, getProjectId } from "./forte.js";
-import { resolveUserId } from "./auth.js";
+import { resolveUser } from "./auth.js";
 import { ensureSchema, pool, type Note } from "./db.js";
 
 const app = express();
@@ -50,12 +50,11 @@ app.get("/health", async (_req: Request, res: Response) => {
 
 /** Authenticated: return the signed-in user's full record from the server-side API. */
 app.get("/api/me", async (req: Request, res: Response) => {
-  const userId = await resolveUserId(req);
-  if (!userId) {
+  const user = await resolveUser(req);
+  if (!user) {
     res.status(401).json({ error: "unauthenticated" });
     return;
   }
-  const user = await forte.projects.getUser({ projectId: getProjectId(), userId });
   res.json(user);
 });
 
@@ -65,17 +64,15 @@ app.get("/api/me", async (req: Request, res: Response) => {
  * didn't send. Send a value of null to delete a key.
  */
 app.put("/api/me/attributes", async (req: Request, res: Response) => {
-  const userId = await resolveUserId(req);
-  if (!userId) {
+  const user = await resolveUser(req);
+  if (!user) {
     res.status(401).json({ error: "unauthenticated" });
     return;
   }
-  const projectId = getProjectId();
   const patch = (req.body ?? {}) as Record<string, string | number | null | undefined>;
 
-  const current = await forte.projects.getUser({ projectId, userId });
   const merged: Record<string, string> = {};
-  for (const [k, v] of Object.entries(current.customMetadataAttributes ?? {})) {
+  for (const [k, v] of Object.entries(user.customMetadataAttributes ?? {})) {
     if (v !== null && v !== undefined) merged[k] = String(v);
   }
   for (const [k, v] of Object.entries(patch)) {
@@ -87,8 +84,8 @@ app.put("/api/me/attributes", async (req: Request, res: Response) => {
   }
 
   const updated = await forte.projects.putUserCustomAttributes({
-    projectId,
-    userId,
+    projectId: getProjectId(),
+    userId: user.userId,
     requestBody: merged,
   });
   res.json(updated);
@@ -109,29 +106,29 @@ app.put("/api/me/attributes", async (req: Request, res: Response) => {
  */
 
 /** Resolve the caller, or answer 401. Returns null when it has already sent the response. */
-async function requireUserId(req: Request, res: Response): Promise<string | null> {
-  const userId = await resolveUserId(req);
-  if (!userId) {
+async function requireUser(req: Request, res: Response) {
+  const user = await resolveUser(req);
+  if (!user) {
     res.status(401).json({ error: "unauthenticated" });
     return null;
   }
-  return userId;
+  return user;
 }
 
 app.get("/api/notes", async (req: Request, res: Response) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
+  const user = await requireUser(req, res);
+  if (!user) return;
 
   const { rows } = await pool.query<Note>(
     "SELECT id, user_id, body, created_at FROM notes WHERE user_id = $1 ORDER BY created_at DESC",
-    [userId],
+    [user.userId],
   );
   res.json(rows);
 });
 
 app.post("/api/notes", async (req: Request, res: Response) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
+  const user = await requireUser(req, res);
+  if (!user) return;
 
   const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
   if (!body) {
@@ -142,14 +139,14 @@ app.post("/api/notes", async (req: Request, res: Response) => {
   // Parameterised, not interpolated — the only safe way to put a user's text into SQL.
   const { rows } = await pool.query<Note>(
     "INSERT INTO notes (user_id, body) VALUES ($1, $2) RETURNING id, user_id, body, created_at",
-    [userId, body],
+    [user.userId, body],
   );
   res.status(201).json(rows[0]);
 });
 
 app.patch("/api/notes/:id", async (req: Request, res: Response) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
+  const user = await requireUser(req, res);
+  if (!user) return;
 
   const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
   if (!body) {
@@ -161,7 +158,7 @@ app.patch("/api/notes/:id", async (req: Request, res: Response) => {
   // comes back as a 404 — it is never loaded, never compared, never updated.
   const { rows } = await pool.query<Note>(
     "UPDATE notes SET body = $1 WHERE id = $2 AND user_id = $3 RETURNING id, user_id, body, created_at",
-    [body, req.params.id, userId],
+    [body, req.params.id, user.userId],
   );
   if (rows.length === 0) {
     res.status(404).json({ error: "not found" });
@@ -171,12 +168,12 @@ app.patch("/api/notes/:id", async (req: Request, res: Response) => {
 });
 
 app.delete("/api/notes/:id", async (req: Request, res: Response) => {
-  const userId = await requireUserId(req, res);
-  if (!userId) return;
+  const user = await requireUser(req, res);
+  if (!user) return;
 
   const { rowCount } = await pool.query("DELETE FROM notes WHERE id = $1 AND user_id = $2", [
     req.params.id,
-    userId,
+    user.userId,
   ]);
   if (rowCount === 0) {
     res.status(404).json({ error: "not found" });

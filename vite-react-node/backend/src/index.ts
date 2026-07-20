@@ -3,7 +3,7 @@ import "./env.js";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { forte, getProjectId } from "./forte.js";
-import { resolveUserId } from "./auth.js";
+import { resolveUser } from "./auth.js";
 
 const app = express();
 app.use(express.json());
@@ -39,12 +39,11 @@ app.get("/health", (_req: Request, res: Response) => {
 
 /** Authenticated: return the signed-in user's full record from the server-side API. */
 app.get("/api/me", async (req: Request, res: Response) => {
-  const userId = await resolveUserId(req);
-  if (!userId) {
+  const user = await resolveUser(req);
+  if (!user) {
     res.status(401).json({ error: "unauthenticated" });
     return;
   }
-  const user = await forte.projects.getUser({ projectId: getProjectId(), userId });
   res.json(user);
 });
 
@@ -54,17 +53,15 @@ app.get("/api/me", async (req: Request, res: Response) => {
  * didn't send. Send a value of null to delete a key.
  */
 app.put("/api/me/attributes", async (req: Request, res: Response) => {
-  const userId = await resolveUserId(req);
-  if (!userId) {
+  const user = await resolveUser(req);
+  if (!user) {
     res.status(401).json({ error: "unauthenticated" });
     return;
   }
-  const projectId = getProjectId();
   const patch = (req.body ?? {}) as Record<string, string | number | null | undefined>;
 
-  const current = await forte.projects.getUser({ projectId, userId });
   const merged: Record<string, string> = {};
-  for (const [k, v] of Object.entries(current.customMetadataAttributes ?? {})) {
+  for (const [k, v] of Object.entries(user.customMetadataAttributes ?? {})) {
     if (v !== null && v !== undefined) merged[k] = String(v);
   }
   for (const [k, v] of Object.entries(patch)) {
@@ -76,8 +73,8 @@ app.put("/api/me/attributes", async (req: Request, res: Response) => {
   }
 
   const updated = await forte.projects.putUserCustomAttributes({
-    projectId,
-    userId,
+    projectId: getProjectId(),
+    userId: user.userId,
     requestBody: merged,
   });
   res.json(updated);
