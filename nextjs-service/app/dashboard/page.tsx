@@ -29,11 +29,11 @@ export default async function DashboardPage() {
           Server Component → projects.getUser
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Rendered on the server. The middleware resolved the user from{" "}
-          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">X-Forte-User-Id</code>{" "}
-          — injected by the Forte gateway, or by <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">forte proxy</code>{" "}
-          locally — and forwarded the user ID. This page used the server-side{" "}
-          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">FORTE_API_TOKEN</code> to fetch the user record.
+          Rendered on the server. The Forte gateway (or{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">forte proxy</code> locally)
+          set <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">X-Forte-User-Id</code> on
+          the request, and this page loaded your record with the server-side{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">FORTE_API_TOKEN</code>.
         </p>
         <pre className="overflow-x-auto rounded-lg bg-neutral-900 p-4 text-xs text-neutral-100">
           {JSON.stringify(user, null, 2)}
@@ -45,8 +45,8 @@ export default async function DashboardPage() {
           API route → /api/me
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          The same lookup, but fetched from a Client Component via a JSON route. Useful when you need
-          to refresh user data without a full page reload.
+          The same lookup, fetched by a Client Component from a JSON route. Use this when you need to
+          refresh data without reloading the page.
         </p>
         <ApiRouteDemo />
       </section>
@@ -56,12 +56,11 @@ export default async function DashboardPage() {
           Custom attributes
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Demonstrates an authenticated mutation: setting a favorite color and a ping counter on the
-          user&apos;s <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">customMetadataAttributes</code>.
-          Both writes go through <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">PUT /api/me/attributes</code>,
-          which reads the userId from the middleware-injected header and calls{" "}
-          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">projects.putUserCustomAttributes</code>{" "}
-          server-side.
+          Preferences are stored in your{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">customMetadataAttributes</code>.
+          Saving calls <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">PUT /api/me/attributes</code>,
+          which accepts only the preference keys it knows and writes them with{" "}
+          <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">projects.putUserCustomAttributes</code>.
         </p>
         <PreferencesPanel
           initialAttributes={(user.customMetadataAttributes ?? {}) as Record<string, unknown>}

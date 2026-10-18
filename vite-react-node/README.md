@@ -1,188 +1,190 @@
-# Forte Example: React SPA website + Node service
+# Forte example: React SPA website + Node service
 
-A runnable example showing the recommended shape for a Forte app whose frontend is a **single-page
-application**:
+A Forte app whose frontend is a single-page app:
 
-- **`frontend/`** — a React single-page app (built with [Vite](https://vite.dev)) deployed as a
-  Forte **website**. Frontend only. It signs users in with the Forte SDK in the browser, then calls
-  the backend for anything privileged.
-- **`backend/`** — a Node/Express app deployed as a Forte **service**. It holds the server-side
-  `FORTE_API_TOKEN`, reads the authenticated user the Forte gateway injects, and uses the
-  server-side Forte API.
+- `frontend/` is a React app built with [Vite](https://vite.dev) and deployed as a Forte website.
+  It signs users in with the Forte SDK in the browser and calls the backend for everything else.
+- `backend/` is an Express app deployed as a Forte service. It reads the signed-in user from the
+  gateway and calls the server-side Forte API with `FORTE_API_TOKEN`.
 
-The two pieces are deployed separately and talk over HTTP.
+[`../nextjs-node`](../nextjs-node) has the same split with a Next.js frontend, plus a Postgres
+database.
 
-> Prefer a full-stack framework? See the sibling [`../nextjs-node`](../nextjs-node) example, which
-> uses Next.js for the frontend. The website/service split is identical; only the frontend tooling
-> differs.
+## Why the backend is a separate service
 
-## Why the backend isn't just part of the SPA
+`vite build` produces static HTML, CSS, and JavaScript that every visitor downloads, so there is
+nowhere in the frontend to keep a secret. Forte websites are also served without passing through
+the Forte gateway, so they don't get what a service gets:
 
-A single-page app is **pure frontend**: `vite build` produces a static `dist/` directory of HTML,
-CSS, and JS with **no server runtime at all**. That's exactly why it's deployed as a Forte
-**website** — and exactly why it can't do the privileged work. Websites are served directly from a
-CDN and **do not pass through the Forte gateway**, so a website does **not** get the tools your
-backend needs:
-
-| | Forte **website** (this `frontend/`) | Forte **service** (this `backend/`) |
+| | Website (`frontend/`) | Service (`backend/`) |
 |---|---|---|
-| `FORTE_API_TOKEN` (server-side `forte.projects.*`) | ❌ never injected | ✅ injected automatically |
-| End-user auth enforcement + `X-Forte-User-Id` header | ❌ no | ✅ gateway authenticates every request |
-| Request logs, metrics, latency percentiles | ❌ no | ✅ captured automatically |
-| Served from | CDN (bypasses the gateway) | behind the Forte gateway |
+| `FORTE_API_TOKEN` for `forte.projects.*` | Never set | Set automatically |
+| Requests authenticated, `X-Forte-User-Id` set | No | Yes |
+| Request logs and metrics | No | Yes |
 
-The most important line is the first one. `FORTE_API_TOKEN` acts as the **project owner** — it can
-read and modify *any* user. An SPA ships its entire JavaScript bundle to every visitor's browser, so
-a token reachable from it would be a public secret: anyone could act as the owner. There is no
-server in an SPA to keep a secret on. That's why Forte never injects it into websites, and why this
-example keeps every `forte.projects.*` call in the service.
+`FORTE_API_TOKEN` acts as the project owner and can read or change any user. Code that needs it, or
+needs to know who is calling, goes in a service.
 
-**Rule of thumb:** if code needs the server-side Forte API (`forte.projects.*`), authenticated
-request handling, or observability, it belongs in a **service** — not a website.
+See [Websites](https://forteplatforms.com/docs/core-concepts/websites),
+[Services](https://forteplatforms.com/docs/core-concepts/services), and
+[API surfaces](https://forteplatforms.com/docs/core-concepts/api-surfaces).
 
-> See also: [Services](https://forteplatforms.com/docs/core-concepts/services) ·
-> [Websites](https://forteplatforms.com/docs/core-concepts/websites) ·
-> [API Surfaces](https://forteplatforms.com/docs/core-concepts/api-surfaces)
+## Client-side routes
 
-## Client-side routing just works
+react-router handles `/login` and `/dashboard`. Forte serves `index.html` for any path on a static
+website, so opening or refreshing `/dashboard` works without a `_redirects` file or `404.html`.
 
-This is a single-page app with client-side routes (`/login`, `/dashboard`) handled by react-router.
-When a visitor opens a deep link like `/dashboard` directly — or refreshes the page — Forte's
-website hosting serves `index.html` for that path, and react-router takes over from there. You do
-**not** need a `_redirects` file, a `404.html`, or any extra configuration; Forte applies the
-single-page-app fallback to every static website automatically.
-
-## How the two talk
+## How a request flows
 
 ```
- Browser (loaded from the website)
-   │  1. forte.users.passwordLogin / OTP   ───────────────►  Forte user API
-   │     returns a session token                            (forte.users.*, no API token)
-   │
-   │  2. fetch(BACKEND_URL/api/me,
-   │        Authorization: Bearer <sessionToken>)  ───────►  Forte gateway
-   │                                                            │ authenticates the session token
-   │                                                            │ injects X-Forte-User-Id
-   │                                                            ▼
-   │                                                         Backend service
-   │                                                            │ forte.projects.getUser(...)
-   │  3. JSON user record  ◄────────────────────────────────────┘   (uses FORTE_API_TOKEN)
+Browser (page from the website)
+  │  1. forte.users.passwordLogin or OTP login ─────────►  Forte user API
+  │     returns a session token
+  │
+  │  2. fetch(BACKEND_URL/api/me,
+  │       Authorization: Bearer <sessionToken>) ────────►  Forte gateway
+  │                                                         │ checks the session token
+  │                                                         │ sets X-Forte-User-Id
+  │                                                         ▼
+  │                                                       Backend service
+  │                                                         │ forte.projects.getUser(...)
+  │  3. JSON user record ◄─────────────────────────────────┘ (uses FORTE_API_TOKEN)
 ```
 
-1. **Login happens in the browser** with the end-user API (`forte.users.*`). No API token is
-   involved; the user authenticates themselves. Login returns a **session token**.
-2. **The browser calls the backend service** with that token in an `Authorization: Bearer` header.
-   The Forte gateway validates it, then forwards the request to the service with a trusted
-   `X-Forte-User-Id` header (it strips any client-set `X-Forte-*` headers first). Locally,
-   `forte proxy` stands in for the gateway and does exactly the same thing.
-3. **The service does the privileged work** — it reads `X-Forte-User-Id` to know who's calling and
-   uses its `FORTE_API_TOKEN` to call `forte.projects.*`.
-
-### Touchpoints
+1. The browser signs in with the end-user API (`forte.users.*`). No API token is involved. Login
+   returns a session token.
+2. The browser calls the service with the token in an `Authorization: Bearer` header. The gateway
+   checks it, removes any `X-Forte-*` headers the client sent, and forwards the request with
+   `X-Forte-User-Id` set. Locally, `forte proxy` does the same.
+3. The service reads `X-Forte-User-Id` and calls `forte.projects.*` with its token.
 
 | File | What it shows |
 |------|---------------|
-| `frontend/src/pages/LoginPage.tsx` | Browser SDK: `new ForteClient()` (no token), then `users.registerUser` / `users.passwordLogin` / `users.createOtpLogin` / `users.completeOtpLogin`. |
-| `frontend/src/lib/session.ts` | Keeps the returned session token in `sessionStorage`. |
-| `frontend/src/lib/api.ts` | `backendFetch()` — calls the service with the session token as a Bearer header. |
-| `frontend/src/App.tsx` | Client-side routes for the single-page app. |
-| `backend/src/auth.ts` | Resolves the user from the trusted `X-Forte-User-Id` header the gateway injects. Run `forte proxy` locally to get the same header. |
-| `backend/src/index.ts` | Express service: CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`. |
-| `backend/src/forte.ts` | The single server-side `ForteClient` (auto-reads `FORTE_API_TOKEN`). |
+| `frontend/src/pages/LoginPage.tsx` | Sign-up with email verification, password sign-in, and one-time-code sign-in, all from the browser. |
+| `frontend/src/lib/session.ts` | Keeps the session token in `sessionStorage`. |
+| `frontend/src/lib/api.ts` | `backendFetch()` sends the token to the service as a Bearer header. |
+| `frontend/src/App.tsx` | Client-side routes. |
+| `backend/src/auth.ts` | Reads the user id from `X-Forte-User-Id`, and loads the full record when a handler needs it. |
+| `backend/src/index.ts` | CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`. |
 
-> **Bearer token vs. first-party cookie.** This example sends the session token as a Bearer header —
-> the simplest cross-origin transport, and it works regardless of domains. If you'd rather keep the
-> token out of JavaScript and rely on an httpOnly session cookie, point the browser SDK at your
-> service's reserved `/_forte` path so the cookie is set first-party. See
-> [First-party cookies via `/_forte`](https://forteplatforms.com/docs/core-concepts/sdks#first-party-cookies-via-_forte).
+## Sign-in
+
+- **Sign-up.** `registerUser` emails a verification code and returns a session that can only verify
+  that email. The user enters the code (`verifyContactMethod`), then the page signs in with
+  `passwordLogin`, which only accepts verified emails.
+- **Password sign-in.** `passwordLogin` returns a session token.
+- **One-time code.** `createOtpLogin` sends a code if the email has an account, and returns the same
+  response either way so it can't be used to check who has signed up. New users sign up on the
+  Password tab.
+- **MFA.** If the project requires MFA, login returns a pending token that the gateway rejects.
+  This example shows an error in that case. See
+  [MFA](https://forteplatforms.com/docs/core-concepts/users/mfa) for the challenge and verify steps.
+
+## Preferences
+
+Preferences are stored in the user's `customMetadataAttributes`, a map of string keys to string
+values on the Forte user record. The service only accepts the keys it knows (`favoriteColor`,
+`theme`). The request body comes from the browser, so an endpoint that wrote any key would let users
+set values your app might later trust, such as a plan or a role.
+
+`putUserCustomAttributes` replaces the whole map, so the service reads the current map, merges the
+change, and writes it back. Two writes at the same moment can lose one of them. Keep counters and
+anything you query in a database.
+
+This example sends the session token as a Bearer header, which works across origins. To keep the
+token out of JavaScript, use an httpOnly cookie through the service's `/_forte` path instead. See
+[First-party cookies via `/_forte`](https://forteplatforms.com/docs/core-concepts/sdks#first-party-cookies-via-_forte).
 
 ## Run locally
 
-The backend trusts the `X-Forte-User-Id` header the Forte gateway injects — it does no token
-validation of its own. Locally there's no gateway, so you run **`forte proxy`** in front of the
-backend: it authenticates each request against Forte and forwards it with the same
-`X-Forte-User-Id` header, exactly like production. The proxy listens on `:8080` (the port the
-frontend already targets) and forwards to the backend on `:8081`.
+The backend trusts `X-Forte-User-Id` and does no token checks of its own. Locally, `forte proxy`
+runs in front of it, authenticates each request against Forte, and sets the same header. The proxy
+listens on `:8080` and forwards to the backend on `:8081`.
 
-You need a Forte project and service first (see **Deploy to Forte** below) so the proxy has
-something to authenticate against.
+The proxy needs a Forte service to authenticate against, so deploy the backend first (see
+[Deploy](#deploy)).
 
-**1. Start the backend (service):**
+1. Start the backend:
 
-```bash
-cd backend
-cp .env.example .env        # fill in FORTE_API_TOKEN and FORTE_PROJECT_ID
-npm install
-npm run dev                 # listens on http://localhost:8081
-```
+   ```bash
+   cd backend
+   cp .env.example .env   # set FORTE_API_TOKEN and FORTE_PROJECT_ID
+   npm install
+   npm run dev            # http://localhost:8081
+   ```
 
-**2. Start `forte proxy` in front of the backend:**
+2. Start `forte proxy` in front of the backend:
 
-```bash
-forte proxy --project-id <projectId> --service-id <serviceId> -p 8081
-                            # authenticates each request, forwards to the backend on :8081,
-                            # and listens on http://localhost:8080
-```
+   ```bash
+   forte proxy --project-id <projectId> --service-id <serviceId> -p 8081
+   ```
 
-**3. Start the frontend (website):**
+3. Start the frontend:
 
-```bash
-cd frontend
-cp .env.example .env.local  # set FORTE_PROJECT_ID; VITE_BACKEND_URL defaults to :8080 (the proxy)
-npm install
-npm run dev                 # opens http://localhost:5173
-```
+   ```bash
+   cd frontend
+   cp .env.example .env.local   # set VITE_FORTE_PROJECT_ID
+   npm install
+   npm run dev                  # http://localhost:5173
+   ```
 
-Open <http://localhost:5173>, sign in with either tab, and you'll land on the dashboard. The browser
-talks to the proxy on `:8080`, which authenticates and forwards to the backend on `:8081`. Get
-`FORTE_API_TOKEN` and your project ID from the Forte dashboard (Project → API tokens).
+Open <http://localhost:5173> and sign up. Get `FORTE_API_TOKEN` and your project ID from the Forte
+console (Project → API tokens).
 
-> Vite only exposes *prefixed* variables to the browser bundle — by default just `VITE_`. This app
-> adds `FORTE_` to `envPrefix` in `vite.config.ts` so it can read `FORTE_PROJECT_ID`, the canonical
-> name Forte injects, rather than a Vite-specific alias. Your own values still use `VITE_`
-> (`VITE_BACKEND_URL`).
+## Deploy
 
-## Deploy to Forte
+The paths below assume this folder is at `vite-react-node/` in your repository. Adjust `--base-dir`
+if it isn't.
 
-Deploy each directory as its own resource:
+1. Create the backend service. `FORTE_API_TOKEN` and `FORTE_PROJECT_ID` are set automatically.
 
-```bash
-# Backend → a service. FORTE_API_TOKEN and FORTE_PROJECT_ID are injected automatically.
-forte services create <projectId> \
-  --name my-app-backend \
-  --repo <githubHttpsUrl> --branch main \
-  --base-directory backend \
-  --auth-exclude /health \
-  --env FRONTEND_ORIGIN=https://<your-website>.sites.tryforte.dev
+   ```bash
+   forte services create <projectId> \
+     --name my-app-backend \
+     --repo <githubHttpsUrl> --branch main \
+     --base-dir vite-react-node/backend \
+     --env FRONTEND_ORIGIN=https://<your-website>.sites.tryforte.dev
+   ```
 
-# Frontend → a website. Vite builds to dist/ (Forte detects this) and FORTE_PROJECT_ID is injected
-# automatically; vite.config.ts exposes it to the browser bundle via envPrefix.
-forte websites create <projectId> \
-  --name my-app-frontend \
-  --repo <githubHttpsUrl> --branch main \
-  --subdirectory frontend \
-  --env VITE_BACKEND_URL=https://<your-backend-service>.tryforte.dev
-```
+2. Exclude `/health` from authentication. Exclusions are set with `update`; `create` ignores them.
 
-Notes:
-- `--auth-exclude /health` lets Forte's health check reach the service without a logged-in user.
-- Set the website's `VITE_BACKEND_URL` to the **service** URL, and the service's `FRONTEND_ORIGIN`
-  to the **website** URL (used for CORS).
-- `VITE_BACKEND_URL` is baked into the bundle at build time (that's how Vite handles `VITE_`
-  variables), so changing it later requires a rebuild of the website.
-- See the [Monorepo guide](https://forteplatforms.com/docs/guides/monorepo) for deploying both from
-  one repository.
+   ```bash
+   forte services update <projectId> <serviceId> --auth-exclude /health
+   ```
 
-## When to reach for something else
+3. Create the website and give it the service URL as `VITE_BACKEND_URL`. Forte detects Vite, builds
+   to `dist/`, and sets `VITE_FORTE_PROJECT_ID` on the build.
 
-- **This pattern (SPA website + service)** — a clean, enforced boundary: the frontend is static and
-  literally *cannot* hold a server secret, it's served fast from a CDN, and the backend scales and
-  deploys independently. Best when you want a CDN-served static frontend with a decoupled backend.
-- **A server-rendered framework as a *service*** — if you need server-rendered pages, server
-  components, or backend logic colocated with your frontend, deploy that framework (e.g. Next.js) as
-  a Forte **service** instead of a website. As a service it runs behind the gateway, so it gets
-  `FORTE_API_TOKEN`, authenticated requests, and observability — see the
-  [`../nextjs-node`](../nextjs-node) example.
+   ```bash
+   forte websites create <projectId> \
+     --name my-app-frontend \
+     --repo <githubHttpsUrl> --branch main \
+     --base-dir vite-react-node/frontend
+   forte websites connections add <projectId> <websiteId> <serviceId> --var VITE_BACKEND_URL
+   ```
 
-What you should **not** do is deploy a frontend that depends on `FORTE_API_TOKEN`, `X-Forte-User-Id`,
-or request logging as a **website** — a website gets none of those.
+   Vite reads `VITE_*` variables at build time. Adding or changing the connection rebuilds the
+   website.
+
+4. If the website URL differs from the `FRONTEND_ORIGIN` you set in step 1, update it:
+
+   ```bash
+   forte services update <projectId> <serviceId> --env FRONTEND_ORIGIN=<websiteUrl>
+   ```
+
+   `--env` on update replaces all environment variables, so include any others you've set.
+
+See the [monorepo guide](https://forteplatforms.com/docs/guides/monorepo) for more on deploying
+both from one repository.
+
+## Choosing a different shape
+
+- **SPA website + service (this example).** The frontend can't hold a server secret and is served
+  as static files. The backend deploys on its own.
+- **A server-rendered framework as a service.** For server-rendered pages or backend code next to
+  your frontend, deploy the framework itself as a Forte service. It runs behind the gateway and gets
+  `FORTE_API_TOKEN`, authenticated requests, and request logs. See
+  [`../nextjs-service`](../nextjs-service).
+
+Don't deploy a frontend that depends on `FORTE_API_TOKEN`, `X-Forte-User-Id`, or request logs as a
+website. A website gets none of them.

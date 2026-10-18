@@ -1,26 +1,26 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { ForteClient } from "@forteplatforms/sdk";
-import { getProjectId, SESSION_COOKIE } from "@/lib/forte";
+import { forte, getProjectId, SESSION_COOKIE } from "@/lib/forte";
 
+// Posted by the dashboard's logout form. Ends the session at Forte, clears the cookie, and sends
+// the browser back to /login.
 export async function POST() {
-  const jar = await cookies();
-  const sessionToken = jar.get(SESSION_COOKIE)?.value;
+  const sessionToken = (await cookies()).get(SESSION_COOKIE)?.value;
 
   if (sessionToken) {
     try {
-      const forte = new ForteClient();
+      // An end-user call: the per-call `authorization` takes the place of the API token.
       await forte.users.logout({
         projectId: getProjectId(),
         authorization: `Bearer ${sessionToken}`,
       });
     } catch {
-      // Best-effort: even if the upstream call fails (e.g., the token is
-      // already invalid) we still want to clear the local cookie.
+      // Already expired or invalid; the cookie is cleared either way.
     }
   }
 
-  const res = NextResponse.json({ ok: true });
+  // A relative Location, so the redirect stays on whatever host the browser used.
+  const res = new NextResponse(null, { status: 303, headers: { Location: "/login" } });
   res.cookies.set(SESSION_COOKIE, "", { path: "/", maxAge: 0 });
   return res;
 }

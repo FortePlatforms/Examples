@@ -1,10 +1,9 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  // Injected automatically by Forte for a *website*; set locally in .env.local. Exposed to the
-  // bundle by the FORTE_ entry in vite.config.ts `envPrefix`.
-  readonly FORTE_PROJECT_ID?: string;
-  // The backend *service* URL. Set it yourself (env var on Forte, .env.local for dev).
+  // Set by Forte on website builds; set it in .env.local for local development.
+  readonly VITE_FORTE_PROJECT_ID?: string;
+  // The backend service URL. Set by the website's service connection, or .env.local locally.
   readonly VITE_BACKEND_URL?: string;
 }
 

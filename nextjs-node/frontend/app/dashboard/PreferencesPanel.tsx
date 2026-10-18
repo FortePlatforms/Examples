@@ -6,6 +6,8 @@ import { backendFetch } from "@/lib/api";
 
 type Attrs = Record<string, unknown>;
 
+const THEMES = ["system", "light", "dark"] as const;
+
 export default function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
   const [attrs, setAttrs] = useState<Attrs>(initialAttributes);
   const [favoriteColor, setFavoriteColor] = useState<string>(
@@ -14,9 +16,7 @@ export default function PreferencesPanel({ initialAttributes }: { initialAttribu
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pingCount = Number(attrs.pingCount ?? 0);
-
-  async function update(patch: Record<string, string | number>) {
+  async function update(patch: Record<string, string | null>) {
     setBusy(true);
     setError(null);
     try {
@@ -37,11 +37,7 @@ export default function PreferencesPanel({ initialAttributes }: { initialAttribu
 
   async function saveColor(e: React.FormEvent) {
     e.preventDefault();
-    await update({ favoriteColor });
-  }
-
-  async function ping() {
-    await update({ pingCount: pingCount + 1 });
+    await update({ favoriteColor: favoriteColor.trim() || null });
   }
 
   return (
@@ -53,6 +49,7 @@ export default function PreferencesPanel({ initialAttributes }: { initialAttribu
           </span>
           <input
             type="text"
+            maxLength={32}
             value={favoriteColor}
             onChange={(e) => setFavoriteColor(e.target.value)}
             placeholder="e.g. teal"
@@ -68,20 +65,23 @@ export default function PreferencesPanel({ initialAttributes }: { initialAttribu
         </button>
       </form>
 
-      <div className="flex items-center justify-between rounded-md bg-neutral-50 px-4 py-3 dark:bg-neutral-950">
-        <div>
-          <p className="text-sm font-medium">Ping count</p>
-          <p className="text-2xl font-semibold">{pingCount}</p>
-        </div>
-        <button
-          type="button"
-          onClick={ping}
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+          Theme
+        </span>
+        <select
+          value={String(attrs.theme ?? "system")}
+          onChange={(e) => update({ theme: e.target.value })}
           disabled={busy}
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+          className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
         >
-          Ping
-        </button>
-      </div>
+          {THEMES.map((theme) => (
+            <option key={theme} value={theme}>
+              {theme}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <details>
         <summary className="cursor-pointer text-xs text-neutral-500">All attributes (JSON)</summary>

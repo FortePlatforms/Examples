@@ -4,13 +4,23 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ForteClient, type LoginUserResponse } from "@forteplatforms/sdk";
 
-// The login page is the one place where SDK calls happen *in the browser*. On success we hand the
-// returned session token to /api/auth/session, which stores it as a first-party cookie under the
-// name the Forte gateway recognizes. From then on the gateway (production) — or `forte proxy`
-// (local) — authenticates each request from that cookie and injects X-Forte-User-Id, which the
-// middleware reads. The app itself never validates the token.
-
+// Sign-in calls Forte directly from the browser with the end-user API (`forte.users.*`), using a
+// client with no API token. The session token is then handed to /api/auth/session, which stores
+// it as an httpOnly cookie that the gateway reads on every later request.
 const forte = new ForteClient();
+
+/** A readable message for a failed SDK call. Forte error bodies carry `errorCode` and `message`. */
+async function describeForteError(err: unknown, fallback: string): Promise<string> {
+  const response = (err as { response?: unknown } | null)?.response;
+  if (response instanceof Response) {
+    const body = (await response.json().catch(() => null)) as {
+      errorCode?: string;
+      message?: string;
+    } | null;
+    return body?.message ?? body?.errorCode ?? fallback;
+  }
+  return err instanceof Error ? err.message : fallback;
+}
 
 type Tab = "password" | "otp";
 
@@ -22,22 +32,42 @@ export default function LoginPage() {
   );
 }
 
+// `next` comes from the URL, so only follow same-site paths. Anything else would be an open redirect.
+function getSafeNextPath(raw: string | null): string {
+  return raw && raw.startsWith("/") && !raw.startsWith("//") && !raw.startsWith("/\\")
+    ? raw
+    : "/dashboard";
+}
+
 function LoginPageInner() {
   const router = useRouter();
   const search = useSearchParams();
-  const next = search.get("next") ?? "/dashboard";
-
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const next = getSafeNextPath(search.get("next"));
   const [tab, setTab] = useState<Tab>("password");
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
 
   useEffect(() => {
+    // /api/me is behind authentication, so it only succeeds for a signed-in user.
+    fetch("/api/me").then((r) => {
+      if (r.ok) router.replace(next);
+    });
     fetch("/api/config")
-      .then((r) => r.json())
-      .then((d) => setProjectId(d.projectId ?? null));
-  }, []);
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d: { projectId: string }) => setProjectId(d.projectId))
+      .catch((e) => setConfigError(`Couldn't load the project config: ${e.message}`));
+  }, [router, next]);
 
-  async function persistSession(login: LoginUserResponse) {
-    await fetch("/api/auth/session", {
+  async function completeLogin(login: LoginUserResponse) {
+    // With MFA on, login returns a short-lived pending token that the gateway rejects until the
+    // user completes a second factor. This example doesn't implement that step.
+    if (login.mfaStatus && login.mfaStatus !== "SATISFIED") {
+      throw new Error(
+        "This project requires multi-factor authentication, which this example doesn't implement. " +
+          "See https://forteplatforms.com/docs/core-concepts/users/mfa.",
+      );
+    }
+    const res = await fetch("/api/auth/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -45,14 +75,16 @@ function LoginPageInner() {
         expirationTime: login.sessionToken.expirationTime,
       }),
     });
-    router.push(next);
+    if (!res.ok) throw new Error(`Couldn't save the session (HTTP ${res.status})`);
+    router.replace(next);
   }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
       <h1 className="text-2xl font-semibold">Sign in</h1>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-        This example demonstrates calling the Forte SDK from the browser. Pick a tab to try either flow.
+        This page signs you in with the Forte SDK from the browser. After that, the Forte gateway
+        authenticates each request to this app from a session cookie.
       </p>
 
       <div className="mt-8 flex gap-1 rounded-lg bg-neutral-200/60 p-1 dark:bg-neutral-800">
@@ -65,14 +97,14 @@ function LoginPageInner() {
       </div>
 
       <div className="mt-6">
-        {!projectId ? (
-          <div className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">
-            Loading project configuration…
-          </div>
+        {configError ? (
+          <ErrorMessage message={configError} />
+        ) : !projectId ? (
+          <p className="text-sm text-neutral-500">Loading…</p>
         ) : tab === "password" ? (
-          <PasswordForm projectId={projectId} onSuccess={persistSession} />
+          <PasswordForm projectId={projectId} completeLogin={completeLogin} />
         ) : (
-          <OtpForm projectId={projectId} onSuccess={persistSession} />
+          <OtpForm projectId={projectId} completeLogin={completeLogin} />
         )}
       </div>
     </main>
@@ -104,39 +136,109 @@ function TabButton({
   );
 }
 
-function PasswordForm({
-  projectId,
-  onSuccess,
-}: {
+type FormProps = {
   projectId: string;
-  onSuccess: (login: LoginUserResponse) => void;
-}) {
+  completeLogin: (login: LoginUserResponse) => Promise<void>;
+};
+
+/**
+ * Password sign-in and sign-up.
+ *
+ * Sign-up is two steps. registerUser emails a verification code and returns a session that is
+ * only good for verifying that email. passwordLogin requires a verified email, so the user enters
+ * the code first, then the form signs in with the password.
+ */
+function PasswordForm({ projectId, completeLogin }: FormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [verification, setVerification] = useState<{
+    contactMethodId: string;
+    registrationToken: string;
+  } | null>(null);
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function run(action: () => Promise<void>, fallback: string) {
     setBusy(true);
     setError(null);
     try {
-      if (mode === "register") {
-        await forte.users.registerUser({
-          projectId,
-          registerUserRequest: { email, password },
-        });
-      }
-      const login = await forte.users.passwordLogin({
-        projectId,
-        passwordLoginRequest: { contactValue: email, password },
-      });
-      onSuccess(login);
+      await action();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(await describeForteError(err, fallback));
+    } finally {
       setBusy(false);
     }
+  }
+
+  async function signIn() {
+    const login = await forte.users.passwordLogin({
+      projectId,
+      passwordLoginRequest: { contactValue: email, password },
+    });
+    await completeLogin(login);
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    await run(async () => {
+      if (mode === "signin") {
+        await signIn();
+        return;
+      }
+      const registered = await forte.users.registerUser({
+        projectId,
+        registerUserRequest: { email, password },
+      });
+      const contactMethodId = registered.userObject?.contactMethods.find(
+        (cm) => !cm.verified && cm.email?.toLowerCase() === email.toLowerCase(),
+      )?.contactMethodId;
+      if (!contactMethodId) {
+        throw new Error("Registration didn't return an email to verify.");
+      }
+      setVerification({ contactMethodId, registrationToken: registered.sessionToken.sessionToken });
+    }, "Sign-in failed");
+  }
+
+  async function verify(e: React.FormEvent) {
+    e.preventDefault();
+    if (!verification) return;
+    await run(async () => {
+      await forte.users.verifyContactMethod({
+        projectId,
+        contactMethodId: verification.contactMethodId,
+        verificationCode: code,
+        authorization: `Bearer ${verification.registrationToken}`,
+      });
+      await signIn();
+    }, "Verification failed");
+  }
+
+  if (verification) {
+    return (
+      <form onSubmit={verify} className="space-y-4">
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          We sent a verification code to <strong>{email}</strong>. Enter it to finish creating your
+          account.
+        </p>
+        <Field label="Verification code">
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            required
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        {error && <ErrorMessage message={error} />}
+        <button type="submit" disabled={busy} className={primaryButtonClass}>
+          {busy ? "Verifying…" : "Verify and sign in"}
+        </button>
+      </form>
+    );
   }
 
   return (
@@ -175,13 +277,12 @@ function PasswordForm({
   );
 }
 
-function OtpForm({
-  projectId,
-  onSuccess,
-}: {
-  projectId: string;
-  onSuccess: (login: LoginUserResponse) => void;
-}) {
+/**
+ * One-time-code sign-in for an existing account. createOtpLogin returns the same response whether
+ * or not the email has an account, so it can't be used to discover who has signed up. New users
+ * register on the Password tab.
+ */
+function OtpForm({ projectId, completeLogin }: FormProps) {
   const [email, setEmail] = useState("");
   const [pendingLoginId, setPendingLoginId] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -193,19 +294,13 @@ function OtpForm({
     setBusy(true);
     setError(null);
     try {
-      // Register first (idempotent for already-existing users in this flow).
-      try {
-        await forte.users.registerUser({ projectId, registerUserRequest: { email } });
-      } catch {
-        // Ignore — user may already exist; we'll continue to OTP.
-      }
       const { pendingLoginId: id } = await forte.users.createOtpLogin({
         projectId,
         createOtpLoginRequest: { email },
       });
       setPendingLoginId(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't send code");
+      setError(await describeForteError(err, "Couldn't send a code"));
     } finally {
       setBusy(false);
     }
@@ -222,9 +317,10 @@ function OtpForm({
         pendingLoginId,
         completeOtpLoginRequest: { code },
       });
-      onSuccess(login);
+      await completeLogin(login);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code");
+      setError(await describeForteError(err, "Invalid code"));
+    } finally {
       setBusy(false);
     }
   }
@@ -245,6 +341,9 @@ function OtpForm({
         <button type="submit" disabled={busy} className={primaryButtonClass}>
           {busy ? "Sending…" : "Send code"}
         </button>
+        <p className="text-center text-xs text-neutral-500">
+          For existing accounts. To sign up, use the Password tab.
+        </p>
       </form>
     );
   }
@@ -252,7 +351,7 @@ function OtpForm({
   return (
     <form onSubmit={complete} className="space-y-4">
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        We sent a code to <strong>{email}</strong>. Enter it below.
+        If <strong>{email}</strong> has an account, we sent it a code. Enter it below.
       </p>
       <Field label="Code">
         <input
@@ -286,7 +385,9 @@ function OtpForm({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-neutral-700 dark:text-neutral-300">
+        {label}
+      </span>
       {children}
     </label>
   );

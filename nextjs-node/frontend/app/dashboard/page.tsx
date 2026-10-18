@@ -19,8 +19,9 @@ export default function DashboardPage() {
       router.replace("/login");
       return;
     }
-    // The user record comes from the backend *service*, which uses its server-side
-    // FORTE_API_TOKEN to call forte.projects.getUser. The website never sees that token.
+    // The backend service loads the user record with its FORTE_API_TOKEN. The browser could also
+    // read its own record with forte.users.getAccount; going through the service shows the
+    // X-Forte-User-Id handoff.
     backendFetch("/api/me")
       .then((r) => {
         if (r.status === 401) {
@@ -39,15 +40,13 @@ export default function DashboardPage() {
 
   async function logout() {
     const token = getSessionToken();
-    if (token) {
-      // Best-effort: invalidate the session with the end-user API, then clear locally.
+    const projectId = getProjectId();
+    if (token && projectId) {
+      // Best-effort: end the session at Forte. The local token is cleared either way.
       try {
-        await forte.users.logout({
-          projectId: getProjectId(),
-          authorization: `Bearer ${token}`,
-        });
+        await forte.users.logout({ projectId, authorization: `Bearer ${token}` });
       } catch {
-        // Ignore — we still clear the local token below.
+        // Already expired or invalid; nothing to end.
       }
     }
     clearSessionToken();
@@ -95,7 +94,7 @@ export default function DashboardPage() {
           Website → Service → projects.getUser
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          This page is a static website. It fetched the user record from the backend{" "}
+          This page runs in the browser. It fetched your user record from the backend{" "}
           <strong>service</strong> at{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">GET /api/me</code>,
           sending the session token as a Bearer header. The Forte gateway authenticated that
@@ -115,12 +114,11 @@ export default function DashboardPage() {
           Custom attributes
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          An authenticated mutation, also handled by the service. Saving a favorite color or
-          incrementing the ping counter calls{" "}
+          Saving a preference calls{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">PUT /api/me/attributes</code>
           , which updates your{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">customMetadataAttributes</code>{" "}
-          via the server-side API.
+          through the server-side API. The service accepts only the preference keys it knows.
         </p>
         <PreferencesPanel
           initialAttributes={(user.customMetadataAttributes ?? {}) as Record<string, unknown>}
@@ -132,15 +130,14 @@ export default function DashboardPage() {
           Notes (Postgres)
         </h2>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          The attributes above live on your Forte user record — a flat map of settings. Notes are
-          rows in a <strong>Forte managed Postgres</strong> database attached to the service:{" "}
+          Preferences live on your Forte user record as a flat map of strings. Notes are rows in a{" "}
+          <strong>Forte managed Postgres</strong> database connected to the service:{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">GET</code>,{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">POST</code>,{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">PATCH</code> and{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">DELETE</code> on{" "}
           <code className="rounded bg-neutral-200/60 px-1 dark:bg-neutral-800">/api/notes</code>.
-          Every one of those queries is scoped to your user id in SQL, so the notes below are yours
-          and only yours.
+          Every query filters on your user id, so you only see and change your own notes.
         </p>
         <NotesPanel />
       </section>

@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/forte";
 
-// After a browser-direct login, the SDK returns a session token. This route stores it as a
-// first-party, httpOnly cookie on the service's own origin, under the name the Forte gateway
-// recognizes. On every subsequent request the gateway (production) or `forte proxy` (local) reads
-// that cookie, authenticates the user, and injects the trusted `X-Forte-User-Id` header that
-// `proxy.ts` reads — so the app itself never validates the token.
+// Stores the session token from a browser login as an httpOnly cookie on this app's origin, under
+// the name the Forte gateway reads. The gateway (or `forte proxy` locally) then authenticates each
+// request from the cookie and sets X-Forte-User-Id; the app never checks the token itself.
 //
-// This is the server-side equivalent of pointing the browser SDK at the reserved `/_forte` path;
-// doing it here keeps the flow identical in local development and production.
+// Pointing the browser SDK at the service's `/_forte` path also sets this cookie. A route of
+// your own keeps local development under `forte proxy` the same as production.
 export async function POST(req: NextRequest) {
   const { sessionToken, expirationTime } = (await req.json()) as {
     sessionToken?: string;

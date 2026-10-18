@@ -5,20 +5,19 @@ import { forte, getProjectId } from "./forte.js";
 const FORTE_USER_ID_HEADER = "x-forte-user-id";
 
 /**
- * Resolve the authenticated end-user for an incoming request, or null if there isn't one.
+ * The signed-in user's id, or null on an unauthenticated request.
  *
- * This backend runs as a Forte *service*: the gateway authenticates every request and injects a
- * trusted `X-Forte-User-Id` header before it arrives (client-set `X-Forte-*` headers are stripped
- * first, so trusting this value is safe). Locally, run `forte proxy` in front of this server — it
- * reproduces the gateway and injects the same header.
- *
- * We turn that id into the full user record with the server-side API, so handlers work with the
- * user object directly. The returned `userId` is guaranteed present — it's the header we looked up.
+ * The Forte gateway authenticates the request and sets `X-Forte-User-Id`. It strips any
+ * client-sent `X-Forte-*` header first, so the value can be trusted. Locally, `forte proxy`
+ * sets the same header.
  */
-export async function resolveUser(
-  req: Request,
-): Promise<(UserObject & { userId: string }) | null> {
-  const userId = req.header(FORTE_USER_ID_HEADER);
+export function getUserId(req: Request): string | null {
+  return req.header(FORTE_USER_ID_HEADER) ?? null;
+}
+
+/** The signed-in user's full record. Costs one Forte API call, so use getUserId when the id is enough. */
+export async function getUser(req: Request): Promise<(UserObject & { userId: string }) | null> {
+  const userId = getUserId(req);
   if (!userId) return null;
   const user = await forte.projects.getUser({ projectId: getProjectId(), userId });
   return { ...user, userId };

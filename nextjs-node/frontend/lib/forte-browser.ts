@@ -1,25 +1,26 @@
 import { ForteClient } from "@forteplatforms/sdk";
 
-// Browser-side Forte client. No API token: `forte.users.*` is authenticated by the end user
-// themselves (login returns a session token), so it is safe to call from the browser.
-//
-// `forte.projects.*` — the project-owner API — is intentionally NOT used here. It requires
-// FORTE_API_TOKEN, which a website never has (and must never ship to the browser). That work
-// lives in the backend service. See the README.
+// Browser-side Forte client, created without an API token. The end-user API (`forte.users.*`)
+// is authenticated by the user's own login, so it is safe in the browser. The project-owner API
+// (`forte.projects.*`) needs FORTE_API_TOKEN, which a website never receives; those calls live in
+// the backend service.
 export const forte = new ForteClient();
 
-// FORTE_PROJECT_ID is the canonical name Forte injects — into services, and into websites at
-// build time. Reading it here (rather than a NEXT_PUBLIC_ alias) means the same variable name
-// works across this website and the backend service. It reaches the browser bundle because
-// next.config.ts lists it under `env`; see the comment there for why that is safe for this
-// value and not for others.
-export function getProjectId(): string {
-  const projectId = process.env.FORTE_PROJECT_ID;
-  if (!projectId) {
-    throw new Error(
-      "FORTE_PROJECT_ID is not set. On Forte it is injected into your website automatically; " +
-        "locally, set it in .env.local.",
-    );
+// Forte injects NEXT_PUBLIC_FORTE_PROJECT_ID into every website build. A project id is public: it
+// names the project and authorizes nothing.
+export function getProjectId(): string | undefined {
+  return process.env.NEXT_PUBLIC_FORTE_PROJECT_ID;
+}
+
+/** A readable message for a failed SDK call. Forte error bodies carry `errorCode` and `message`. */
+export async function describeForteError(err: unknown, fallback: string): Promise<string> {
+  const response = (err as { response?: unknown } | null)?.response;
+  if (response instanceof Response) {
+    const body = (await response.json().catch(() => null)) as {
+      errorCode?: string;
+      message?: string;
+    } | null;
+    return body?.message ?? body?.errorCode ?? fallback;
   }
-  return projectId;
+  return err instanceof Error ? err.message : fallback;
 }

@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "bun --bun next dev",
     "build": "next build",
-    "start": "bun --bun next start",
-    "lint": "next lint"
+    "start": "bun --bun next start"
   },
   "dependencies": {
     "@forteplatforms/sdk": "^1.0.320",

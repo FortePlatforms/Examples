@@ -1,35 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const FORTE_USER_ID_HEADER = "x-forte-user-id";
-const APP_USER_ID_HEADER = "x-app-user-id";
-
-// The auth gate. This app is deployed as a Forte *service*, so the Forte gateway authenticates
-// every request and injects a trusted `X-Forte-User-Id` header before it arrives (it strips any
-// client-set `X-Forte-*` headers first, so trusting this value is safe). Locally, `forte proxy`
-// reproduces the gateway and injects the same header. This middleware only reads it, then
-// forwards the resolved user id to route handlers and Server Components as `x-app-user-id`.
-//
-// A request without the header should never reach a gated route through the gateway/proxy — it
-// would have been rejected upstream — so this redirect is a fallback for the un-proxied case
-// (e.g. running `next dev` directly with nothing in front).
+// Behind the Forte gateway, an unauthenticated request to a gated route is rejected before it
+// gets here. This covers running `next dev` with nothing in front of it.
 export function proxy(req: NextRequest) {
-  const userId = req.headers.get(FORTE_USER_ID_HEADER);
-
-  if (!userId) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("next", req.nextUrl.pathname);
-    return NextResponse.redirect(url);
+  if (req.headers.get("x-forte-user-id")) {
+    return NextResponse.next();
   }
-
-  const forwarded = new Headers(req.headers);
-  forwarded.set(APP_USER_ID_HEADER, userId);
-  return NextResponse.next({ request: { headers: forwarded } });
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  }
+  const url = req.nextUrl.clone();
+  url.pathname = "/login";
+  url.searchParams.set("next", req.nextUrl.pathname);
+  return NextResponse.redirect(url);
 }
 
 export const config = {
   matcher: [
-    // Match everything except: /login, /api/auth/*, /api/config, _next assets, favicon.
-    "/((?!login|api/auth|api/config|_next/static|_next/image|favicon.ico).*)",
+    // Everything except the routes excluded from authentication (see the README). `.+` leaves
+    // out "/" itself.
+    "/((?!login|api/auth|api/config|_next/static|favicon.ico).+)",
   ],
 };

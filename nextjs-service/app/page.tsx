@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
-// Middleware will redirect unauthenticated visitors to /login. Authenticated
-// requests fall through to here, where we forward to the dashboard.
+// "/" is excluded from authentication, so signed-out visitors land here instead of getting a 401.
+// The login page sends signed-in users on to the dashboard.
 export default function Home() {
-  redirect("/dashboard");
+  redirect("/login");
 }

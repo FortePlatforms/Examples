@@ -15,8 +15,9 @@ export default function DashboardPage() {
       navigate("/login", { replace: true });
       return;
     }
-    // The user record comes from the backend *service*, which uses its server-side
-    // FORTE_API_TOKEN to call forte.projects.getUser. The website never sees that token.
+    // The backend service loads the user record with its FORTE_API_TOKEN. The browser could also
+    // read its own record with forte.users.getAccount; going through the service shows the
+    // X-Forte-User-Id handoff.
     backendFetch("/api/me")
       .then((r) => {
         if (r.status === 401) {
@@ -35,15 +36,13 @@ export default function DashboardPage() {
 
   async function logout() {
     const token = getSessionToken();
-    if (token) {
-      // Best-effort: invalidate the session with the end-user API, then clear locally.
+    const projectId = getProjectId();
+    if (token && projectId) {
+      // Best-effort: end the session at Forte. The local token is cleared either way.
       try {
-        await forte.users.logout({
-          projectId: getProjectId(),
-          authorization: `Bearer ${token}`,
-        });
+        await forte.users.logout({ projectId, authorization: `Bearer ${token}` });
       } catch {
-        // Ignore — we still clear the local token below.
+        // Already expired or invalid; nothing to end.
       }
     }
     clearSessionToken();
@@ -83,7 +82,7 @@ export default function DashboardPage() {
       <section className="section">
         <h2 className="overline">Website → Service → projects.getUser</h2>
         <p className="muted">
-          This page is a static single-page app. It fetched the user record from the backend{" "}
+          This page is a static single-page app. It fetched your user record from the backend{" "}
           <strong>service</strong> at <code className="code">GET /api/me</code>, sending the
           session token as a Bearer header. The Forte gateway authenticated that request, told the
           service who you are via <code className="code">X-Forte-User-Id</code>, and the service
@@ -95,10 +94,9 @@ export default function DashboardPage() {
       <section className="section">
         <h2 className="overline">Custom attributes</h2>
         <p className="muted">
-          An authenticated mutation, also handled by the service. Saving a favorite color or
-          incrementing the ping counter calls <code className="code">PUT /api/me/attributes</code>,
-          which updates your <code className="code">customMetadataAttributes</code> via the
-          server-side API.
+          Saving a preference calls <code className="code">PUT /api/me/attributes</code> on the
+          service, which updates your <code className="code">customMetadataAttributes</code>{" "}
+          through the server-side API. The service accepts only the preference keys it knows.
         </p>
         <PreferencesPanel
           initialAttributes={(user.customMetadataAttributes ?? {}) as Record<string, unknown>}
@@ -110,6 +108,8 @@ export default function DashboardPage() {
 
 type Attrs = Record<string, unknown>;
 
+const THEMES = ["system", "light", "dark"] as const;
+
 function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
   const [attrs, setAttrs] = useState<Attrs>(initialAttributes);
   const [favoriteColor, setFavoriteColor] = useState<string>(
@@ -118,9 +118,7 @@ function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pingCount = Number(attrs.pingCount ?? 0);
-
-  async function update(patch: Record<string, string | number>) {
+  async function update(patch: Record<string, string | null>) {
     setBusy(true);
     setError(null);
     try {
@@ -141,11 +139,7 @@ function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
 
   async function saveColor(e: FormEvent) {
     e.preventDefault();
-    await update({ favoriteColor });
-  }
-
-  async function ping() {
-    await update({ pingCount: pingCount + 1 });
+    await update({ favoriteColor: favoriteColor.trim() || null });
   }
 
   return (
@@ -155,6 +149,7 @@ function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
           <span>Favorite color</span>
           <input
             type="text"
+            maxLength={32}
             value={favoriteColor}
             onChange={(e) => setFavoriteColor(e.target.value)}
             placeholder="e.g. teal"
@@ -166,15 +161,21 @@ function PreferencesPanel({ initialAttributes }: { initialAttributes: Attrs }) {
         </button>
       </form>
 
-      <div className="counter">
-        <div>
-          <p className="counter-label">Ping count</p>
-          <p className="counter-value">{pingCount}</p>
-        </div>
-        <button type="button" onClick={ping} disabled={busy} className="btn">
-          Ping
-        </button>
-      </div>
+      <label className="field">
+        <span>Theme</span>
+        <select
+          value={String(attrs.theme ?? "system")}
+          onChange={(e) => update({ theme: e.target.value })}
+          disabled={busy}
+          className="input"
+        >
+          {THEMES.map((theme) => (
+            <option key={theme} value={theme}>
+              {theme}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <details>
         <summary>All attributes (JSON)</summary>

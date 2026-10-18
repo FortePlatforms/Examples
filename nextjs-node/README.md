@@ -1,237 +1,219 @@
-# Forte Example: Next.js website + Node service
+# Forte example: Next.js website + Node service
 
-A runnable example showing the recommended shape for a Forte app with a real backend:
+A Forte app split into two deployments:
 
-- **`frontend/`** — a Next.js app deployed as a Forte **website**. Frontend only. It signs users
-  in with the Forte SDK in the browser, then calls the backend for anything privileged.
-- **`backend/`** — a Node/Express app deployed as a Forte **service**. It holds the server-side
-  `FORTE_API_TOKEN`, reads the authenticated user the Forte gateway injects, uses the
-  server-side Forte API, and stores per-user data in a Forte **managed Postgres** database.
+- `frontend/` is a Next.js app deployed as a Forte website. It signs users in with the Forte SDK in
+  the browser and calls the backend for everything else.
+- `backend/` is an Express app deployed as a Forte service. It reads the signed-in user from the
+  gateway, calls the server-side Forte API with `FORTE_API_TOKEN`, and stores notes in a Forte
+  managed Postgres database.
 
-The two pieces are deployed separately and talk over HTTP.
+For the single-app alternative, where one Next.js codebase is deployed as a service, see
+[`../nextjs-service`](../nextjs-service).
 
-## Why the backend isn't just inside Next.js
+## Why the backend is a separate service
 
-It's tempting to put everything in one Next.js app and deploy it as a website. Don't — a Forte
-**website is frontend only**. Websites are served directly from a CDN and **do not pass through the
-Forte gateway**, which means a website does **not** get the tools your backend needs:
+Forte websites, static or server-rendered, are served without passing through the Forte gateway.
+That means a website doesn't get the things a service does:
 
-| | Forte **website** (this `frontend/`) | Forte **service** (this `backend/`) |
+| | Website (`frontend/`) | Service (`backend/`) |
 |---|---|---|
-| `FORTE_API_TOKEN` (server-side `forte.projects.*`) | ❌ never injected | ✅ injected automatically |
-| End-user auth enforcement + `X-Forte-User-Id` header | ❌ no | ✅ gateway authenticates every request |
-| Request logs, metrics, latency percentiles | ❌ no | ✅ captured automatically |
-| Served from | CDN (bypasses the gateway) | behind the Forte gateway |
+| `FORTE_API_TOKEN` for `forte.projects.*` | Never set | Set automatically |
+| Requests authenticated, `X-Forte-User-Id` set | No | Yes |
+| Request logs and metrics | No | Yes |
 
-The most important line is the first one. `FORTE_API_TOKEN` acts as the **project owner** — it can
-read and modify *any* user. A website ships its code to every visitor's browser, so a token reachable
-from a website would be a public secret: anyone could act as the owner. That's why Forte never injects
-it into websites, and why this example keeps every `forte.projects.*` call in the service.
+`FORTE_API_TOKEN` acts as the project owner and can read or change any user. Code that needs it, or
+needs to know who is calling, goes in a service.
 
-**Rule of thumb:** if code needs the server-side Forte API (`forte.projects.*`), authenticated request
-handling, or observability, it belongs in a **service** — not a website.
+See [Websites](https://forteplatforms.com/docs/core-concepts/websites),
+[Services](https://forteplatforms.com/docs/core-concepts/services), and
+[API surfaces](https://forteplatforms.com/docs/core-concepts/api-surfaces).
 
-> See also: [Services](https://forteplatforms.com/docs/core-concepts/services) ·
-> [Websites](https://forteplatforms.com/docs/core-concepts/websites) ·
-> [API Surfaces](https://forteplatforms.com/docs/core-concepts/api-surfaces)
-
-## How the two talk
+## How a request flows
 
 ```
- Browser (loaded from the website)
-   │  1. forte.users.passwordLogin / OTP   ───────────────►  Forte user API
-   │     returns a session token                            (forte.users.*, no API token)
-   │
-   │  2. fetch(BACKEND_URL/api/me,
-   │        Authorization: Bearer <sessionToken>)  ───────►  Forte gateway
-   │                                                            │ authenticates the session token
-   │                                                            │ injects X-Forte-User-Id
-   │                                                            ▼
-   │                                                         Backend service
-   │                                                            │ forte.projects.getUser(...)
-   │  3. JSON user record  ◄────────────────────────────────────┘   (uses FORTE_API_TOKEN)
+Browser (page from the website)
+  │  1. forte.users.passwordLogin or OTP login ─────────►  Forte user API
+  │     returns a session token
+  │
+  │  2. fetch(BACKEND_URL/api/me,
+  │       Authorization: Bearer <sessionToken>) ────────►  Forte gateway
+  │                                                         │ checks the session token
+  │                                                         │ sets X-Forte-User-Id
+  │                                                         ▼
+  │                                                       Backend service
+  │                                                         │ forte.projects.getUser(...)
+  │  3. JSON user record ◄─────────────────────────────────┘ (uses FORTE_API_TOKEN)
 ```
 
-1. **Login happens in the browser** with the end-user API (`forte.users.*`). No API token is
-   involved; the user authenticates themselves. Login returns a **session token**.
-2. **The browser calls the backend service** with that token in an `Authorization: Bearer` header.
-   The Forte gateway validates it, then forwards the request to the service with a trusted
-   `X-Forte-User-Id` header (it strips any client-set `X-Forte-*` headers first). Locally,
-   `forte proxy` stands in for the gateway and does exactly the same thing.
-3. **The service does the privileged work** — it reads `X-Forte-User-Id` to know who's calling and
-   uses its `FORTE_API_TOKEN` to call `forte.projects.*`.
+1. The browser signs in with the end-user API (`forte.users.*`). No API token is involved. Login
+   returns a session token.
+2. The browser calls the service with the token in an `Authorization: Bearer` header. The gateway
+   checks it, removes any `X-Forte-*` headers the client sent, and forwards the request with
+   `X-Forte-User-Id` set. Locally, `forte proxy` does the same.
+3. The service reads `X-Forte-User-Id` and calls `forte.projects.*` with its token.
 
-### Touchpoints
+The browser can also read its own user record with `forte.users.getAccount`. This example goes
+through the service to show the `X-Forte-User-Id` handoff.
 
 | File | What it shows |
 |------|---------------|
-| `frontend/app/login/page.tsx` | Browser SDK: `new ForteClient()` (no token), then `users.registerUser` / `users.passwordLogin` / `users.createOtpLogin` / `users.completeOtpLogin`. |
-| `frontend/lib/session.ts` | Keeps the returned session token in `sessionStorage`. |
-| `frontend/lib/api.ts` | `backendFetch()` — calls the service with the session token as a Bearer header. |
-| `backend/src/auth.ts` | Resolves the user from the trusted `X-Forte-User-Id` header the gateway injects. Run `forte proxy` locally to get the same header. |
-| `backend/src/index.ts` | Express service: CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`, and `/api/notes` CRUD. |
-| `backend/src/forte.ts` | The single server-side `ForteClient` (auto-reads `FORTE_API_TOKEN`). |
-| `backend/src/db.ts` | The Postgres pool: reads `DATABASE_URL`, handles idle-client errors, creates the schema on boot. |
-| `frontend/app/dashboard/NotesPanel.tsx` | The CRUD UI. Note that it never sends a user id — the service derives it. |
+| `frontend/app/login/page.tsx` | Sign-up with email verification, password sign-in, and one-time-code sign-in, all from the browser. |
+| `frontend/lib/session.ts` | Keeps the session token in `sessionStorage`. |
+| `frontend/lib/api.ts` | `backendFetch()` sends the token to the service as a Bearer header. |
+| `backend/src/auth.ts` | Reads the user id from `X-Forte-User-Id`, and loads the full record when a handler needs it. |
+| `backend/src/index.ts` | CORS for the website origin, `GET /health`, `GET /api/me`, `PUT /api/me/attributes`, and paginated `/api/notes` CRUD. |
+| `backend/src/db.ts` | The Postgres pool and schema. |
 
-## Why Postgres and not user metadata
+## Sign-in
 
-The dashboard shows both, deliberately, because the line between them is the thing worth learning.
+- **Sign-up.** `registerUser` emails a verification code and returns a session that can only verify
+  that email. The user enters the code (`verifyContactMethod`), then the page signs in with
+  `passwordLogin`, which only accepts verified emails.
+- **Password sign-in.** `passwordLogin` returns a session token.
+- **One-time code.** `createOtpLogin` sends a code if the email has an account, and returns the same
+  response either way so it can't be used to check who has signed up. New users sign up on the
+  Password tab.
+- **MFA.** If the project requires MFA, login returns a pending token that the gateway rejects.
+  This example shows an error in that case. See
+  [MFA](https://forteplatforms.com/docs/core-concepts/users/mfa) for the challenge and verify steps.
 
-**Preferences** are stored in the user's `customMetadataAttributes` — a flat map of strings hanging
-off one Forte user record. Perfect for a handful of settings: a theme, a favorite color, a counter.
-No schema, no extra infrastructure, and it travels with the user.
+## Preferences and notes
 
-**Notes** are rows. There are many per user, you list them in an order, you edit and delete them
-individually, and one day you'll want to search them. That is a database, and trying to model it as
-a metadata map means encoding a list into a string and re-parsing it on every read.
+Preferences are stored in the user's `customMetadataAttributes`, a map of string keys to string
+values on the Forte user record. It suits a few small settings. `putUserCustomAttributes` replaces
+the whole map, so the service reads the current map, merges the change, and writes it back. Two
+writes at the same moment can lose one of them.
 
-The rough test: if you'd ever want to write `WHERE`, `ORDER BY`, or `COUNT`, you want Postgres.
+The service only accepts the preference keys it knows (`favoriteColor`, `theme`). The request body
+comes from the browser, so an endpoint that wrote any key would let users set values your app might
+later trust, such as a plan or a role.
 
-### One rule the service follows everywhere
+Notes are rows in Postgres. There are many per user, they're listed in order, and they're edited
+one at a time. If you'd write `WHERE`, `ORDER BY`, or `LIMIT` against the data, it belongs in a
+database.
 
-Every SQL statement in `backend/src/index.ts` filters on `user_id` — **writes included**, not just
-reads:
+Every SQL statement filters on `user_id`, including updates and deletes:
 
 ```sql
 UPDATE notes SET body = $1 WHERE id = $2 AND user_id = $3
 ```
 
-The `AND user_id = $3` is the part that matters. The Forte user id from the gateway is the tenant
-key, so a note id on its own is never enough to address a row. If the update matched on `id` alone,
-any signed-in user could edit anyone else's note by guessing a number. Written this way, someone
-else's note simply matches no rows and comes back as a 404 — it is never loaded and never compared,
-so there is no check to forget.
+Without `AND user_id = $3`, any signed-in user could edit another user's note by guessing its id.
+With it, someone else's note matches no rows and the service returns 404. The list endpoint returns
+20 notes at a time and a `nextCursor` for the next page.
 
-> **Bearer token vs. first-party cookie.** This example sends the session token as a Bearer header —
-> the simplest cross-origin transport, and it works regardless of domains. If you'd rather keep the
-> token out of JavaScript and rely on an httpOnly session cookie, point the browser SDK at your
-> service's reserved `/_forte` path so the cookie is set first-party. See
-> [First-party cookies via `/_forte`](https://forteplatforms.com/docs/core-concepts/sdks#first-party-cookies-via-_forte).
+This example sends the session token as a Bearer header, which works across origins. To keep the
+token out of JavaScript, use an httpOnly cookie through the service's `/_forte` path instead. See
+[First-party cookies via `/_forte`](https://forteplatforms.com/docs/core-concepts/sdks#first-party-cookies-via-_forte).
 
 ## Run locally
 
-The backend trusts the `X-Forte-User-Id` header the Forte gateway injects — it does no token
-validation of its own. Locally there's no gateway, so you run **`forte proxy`** in front of the
-backend: it authenticates each request against Forte and forwards it with the same
-`X-Forte-User-Id` header, exactly like production. The proxy listens on `:8080` (the port the
-frontend already targets) and forwards to the backend on `:8081`.
+The backend trusts `X-Forte-User-Id` and does no token checks of its own. Locally, `forte proxy`
+runs in front of it, authenticates each request against Forte, and sets the same header. The proxy
+listens on `:8080` and forwards to the backend on `:8081`.
 
-You need a Forte project and service first (see **Deploy to Forte** below) so the proxy has
-something to authenticate against.
+The proxy needs a Forte service to authenticate against, so deploy the backend first (see
+[Deploy](#deploy)).
 
-**1. Start Postgres:**
+1. Start Postgres:
 
-```bash
-docker run -d --name forte-example-pg \
-  -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
-```
+   ```bash
+   docker run -d --name forte-example-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
+   ```
 
-Any Postgres will do — this is just the shortest path to one. The service creates its table on
-startup, so there's no migration step.
+   The backend creates its table on startup.
 
-**2. Start the backend (service):**
+2. Start the backend:
 
-```bash
-cd backend
-cp .env.example .env        # fill in FORTE_API_TOKEN and FORTE_PROJECT_ID
-bun install                 # or: npm install
-bun run dev                 # listens on http://localhost:8081
-```
+   ```bash
+   cd backend
+   cp .env.example .env   # set FORTE_API_TOKEN and FORTE_PROJECT_ID
+   bun install
+   bun run dev            # http://localhost:8081
+   ```
 
-`.env.example` already points `DATABASE_URL` at the container above and sets `PORT=8081`. The backend
-loads `.env` with Node's built-in `process.loadEnvFile()` (see `backend/src/env.ts`) — no dotenv
-dependency.
+   `.env.example` already points `DATABASE_URL` at the container above.
 
-**3. Start `forte proxy` in front of the backend:**
+3. Start `forte proxy` in front of the backend:
 
-```bash
-forte proxy --project-id <projectId> --service-id <serviceId> -p 8081
-                            # authenticates each request, forwards to the backend on :8081,
-                            # and listens on http://localhost:8080
-```
+   ```bash
+   forte proxy --project-id <projectId> --service-id <serviceId> -p 8081
+   ```
 
-**4. Start the frontend (website):**
+4. Start the frontend:
 
-```bash
-cd frontend
-cp .env.example .env.local  # set FORTE_PROJECT_ID; NEXT_PUBLIC_BACKEND_URL defaults to :8080 (the proxy)
-bun install                 # or: npm install
-bun run dev                 # opens http://localhost:3000
-```
+   ```bash
+   cd frontend
+   cp .env.example .env.local   # set NEXT_PUBLIC_FORTE_PROJECT_ID
+   bun install
+   bun run dev                  # http://localhost:3000
+   ```
 
-Open <http://localhost:3000>, sign in with either tab, and you'll land on the dashboard. The browser
-talks to the proxy on `:8080`, which authenticates and forwards to the backend on `:8081`. Get
-`FORTE_API_TOKEN` and your project ID from the Forte dashboard (Project → API tokens).
+Open <http://localhost:3000> and sign up. Get `FORTE_API_TOKEN` and your project ID from the Forte
+console (Project → API tokens).
 
-> Next.js only inlines `NEXT_PUBLIC_*` variables into browser code. This app reads
-> `FORTE_PROJECT_ID` — the canonical name Forte injects, and the same one the backend service uses —
-> by listing it under `env` in `next.config.ts`. Only do that for values that are safe to publish; a
-> project id names the project and authorizes nothing.
+## Deploy
 
-## Deploy to Forte
+The paths below assume this folder is at `nextjs-node/` in your repository. Adjust `--base-dir` if
+it isn't.
 
-Deploy each directory as its own resource:
+1. Create a Postgres database and wait for it to become `ACTIVE`:
 
-```bash
-# Backend → a service. FORTE_API_TOKEN and FORTE_PROJECT_ID are injected automatically.
-forte services create <projectId> \
-  --name my-app-backend \
-  --repo <githubHttpsUrl> --branch main \
-  --base-directory backend \
-  --auth-exclude /health \
-  --env FRONTEND_ORIGIN=https://<your-website>.sites.tryforte.dev
+   ```bash
+   forte databases create <projectId> --name notes
+   forte databases get <projectId> <databaseId>
+   ```
 
-# Frontend → a website. FORTE_PROJECT_ID (and NEXT_PUBLIC_ variants) are injected automatically.
-forte websites create <projectId> \
-  --name my-app-frontend \
-  --repo <githubHttpsUrl> --branch main \
-  --subdirectory frontend \
-  --env NEXT_PUBLIC_BACKEND_URL=https://<your-backend-service>.tryforte.dev
-```
+2. Create the backend service with the database connected. Forte creates a Postgres role for the
+   service and sets `DATABASE_URL`. `FORTE_API_TOKEN` and `FORTE_PROJECT_ID` are set automatically.
 
-Then give the service a database — this part is done in the console, since databases have no CLI yet:
+   ```bash
+   forte services create <projectId> \
+     --name my-app-backend \
+     --repo <githubHttpsUrl> --branch main \
+     --base-dir nextjs-node/backend \
+     --database <databaseId> \
+     --env FRONTEND_ORIGIN=https://<your-website>.sites.tryforte.dev
+   ```
 
-1. **Project → Databases → Create database**, pick Postgres, and wait for it to go **Active**.
-2. Open it, choose **Connect to a service**, and pick the backend service.
-3. Leave the environment variable as `DATABASE_URL` (the default) and confirm.
+3. Exclude `/health` from authentication. Exclusions are set with `update`; `create` ignores them.
 
-Forte creates a dedicated Postgres role for that service, sets `DATABASE_URL` on it, and redeploys.
-You never see or copy the password, and it is never returned by the API — the service is simply
-started with the variable already set. Disconnecting reverses all of it: the role is dropped and the
-variable removed.
+   ```bash
+   forte services update <projectId> <serviceId> --auth-exclude /health
+   ```
 
-If your app reads discrete variables instead of a URL, map those instead — the connect dialog lets
-you set any of host, port, database, username and password by name, and Forte suggests the ones your
-framework expects.
+   `/health` runs `SELECT 1`, so a deploy with a broken database connection fails its health check.
 
-Notes:
-- `--auth-exclude /health` lets Forte's health check reach the service without a logged-in user.
-  This example's `/health` runs `SELECT 1`, so a broken database fails the health check and the
-  deploy rolls back instead of going live broken.
-- Set the website's `NEXT_PUBLIC_BACKEND_URL` to the **service** URL, and the service's
-  `FRONTEND_ORIGIN` to the **website** URL (used for CORS).
-- See the [Monorepo guide](https://forteplatforms.com/docs/guides/monorepo) for deploying both from
-  one repository.
+4. Create the website and give it the service URL as `NEXT_PUBLIC_BACKEND_URL`. Forte sets
+   `NEXT_PUBLIC_FORTE_PROJECT_ID` on the build.
 
-## Alternative: one Next.js codebase, hosted as a service
+   ```bash
+   forte websites create <projectId> \
+     --name my-app-frontend \
+     --repo <githubHttpsUrl> --branch main \
+     --base-dir nextjs-node/frontend
+   forte websites connections add <projectId> <websiteId> <serviceId> --var NEXT_PUBLIC_BACKEND_URL
+   ```
 
-If you'd rather keep your backend logic *inside* Next.js (API routes, server components, server
-actions) instead of a separate Express app, you can — but deploy that Next.js app as a Forte
-**service**, not a website. As a service it runs behind the gateway, so it gets exactly the tooling a
-website lacks: `FORTE_API_TOKEN` is injected, every request is authenticated with `X-Forte-User-Id`,
-and requests are logged and metered. Your server-side code can then call `forte.projects.*` directly,
-with no separate backend.
+5. If the website URL differs from the `FRONTEND_ORIGIN` you set in step 2, update it:
 
-Trade-offs:
+   ```bash
+   forte services update <projectId> <serviceId> --env FRONTEND_ORIGIN=<websiteUrl>
+   ```
 
-- **Single Next.js service** — one codebase, backend logic lives next to your pages, full Forte
-  tooling. Simplest if your frontend and backend evolve together. The whole app runs as server-rendered
-  code behind the gateway.
-- **Website + service (this example)** — a clean, enforced boundary: the frontend is static and
-  literally *cannot* hold a server secret, and the backend scales and deploys independently. Best when
-  you want the frontend and backend decoupled, or a CDN-served static frontend.
+   `--env` on update replaces all environment variables, so include any others you've set.
 
-What you should **not** do is deploy a Next.js app that depends on `FORTE_API_TOKEN`,
-`X-Forte-User-Id`, or request logging as a **website** — a website gets none of those. Pick "service"
-(with or without a separate frontend), and reach for a "website" only for frontend-only hosting.
+See the [monorepo guide](https://forteplatforms.com/docs/guides/monorepo) for more on deploying
+both from one repository.
+
+## Choosing between this and one Next.js service
+
+- **Website + service (this example).** The frontend can't hold a server secret, and the two deploy
+  separately. Use it when you want a static or CDN-served frontend apart from the backend.
+- **One Next.js app as a service** ([`../nextjs-service`](../nextjs-service)). API routes and Server
+  Components run behind the gateway, so they get `FORTE_API_TOKEN`, `X-Forte-User-Id`, and request
+  logs. Use it when frontend and backend change together.
+
+Don't deploy a Next.js app that depends on `FORTE_API_TOKEN`, `X-Forte-User-Id`, or request logs as
+a website. A website gets none of them.

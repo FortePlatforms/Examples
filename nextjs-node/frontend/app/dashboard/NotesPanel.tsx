@@ -11,22 +11,23 @@ type Note = {
 
 export default function NotesPanel() {
   const [notes, setNotes] = useState<Note[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingBody, setEditingBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Notice there is no user id anywhere in this component. The browser never says which notes it
-   * wants — the service derives that from the authenticated session and scopes every query to it.
-   */
-  async function load() {
+  // No user id is sent from here. The service takes it from the authenticated request and
+  // scopes every query to it.
+  async function load(cursor: string | null = null) {
     setError(null);
     try {
-      const res = await backendFetch("/api/notes");
+      const res = await backendFetch(cursor ? `/api/notes?cursor=${cursor}` : "/api/notes");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setNotes((await res.json()) as Note[]);
+      const page = (await res.json()) as { notes: Note[]; nextCursor: string | null };
+      setNotes((current) => (cursor && current ? [...current, ...page.notes] : page.notes));
+      setNextCursor(page.nextCursor);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load notes");
     }
@@ -105,7 +106,7 @@ export default function NotesPanel() {
         <p className="text-sm text-neutral-500">Loading…</p>
       ) : notes.length === 0 ? (
         <p className="rounded-md bg-neutral-50 px-4 py-6 text-center text-sm text-neutral-500 dark:bg-neutral-950">
-          No notes yet. Add one above — it will still be here after a redeploy.
+          No notes yet. Notes are stored in Postgres, so they persist across redeploys.
         </p>
       ) : (
         <ul className="divide-y divide-neutral-200 dark:divide-neutral-800">
@@ -166,6 +167,16 @@ export default function NotesPanel() {
             </li>
           ))}
         </ul>
+      )}
+
+      {nextCursor && (
+        <button
+          type="button"
+          onClick={() => load(nextCursor)}
+          className="w-full rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+        >
+          Load more
+        </button>
       )}
 
       {error && (

@@ -1,93 +1,117 @@
-# Forte Next.js Example (single app, deployed as a service)
+# Forte example: Next.js app deployed as a service
 
-A runnable Next.js 16 (App Router) example that runs as a **single Forte service** — frontend and
-backend in one codebase — using [`@forteplatforms/sdk`](https://www.npmjs.com/package/@forteplatforms/sdk) to:
+A Next.js 16 (App Router) app deployed as a single Forte service, with frontend and backend in one
+codebase. It uses [`@forteplatforms/sdk`](https://www.npmjs.com/package/@forteplatforms/sdk) to:
 
-- Sign users in with either a **password** or a **one-time code** — both calling the SDK directly from the browser.
-- Gate authenticated routes with a Next.js **`proxy.ts`** (Next.js 16's middleware) that reads the trusted `X-Forte-User-Id` header the Forte gateway — or `forte proxy` locally — injects on each authenticated request.
-- Look up the current user **two ways** from the server: a Server Component (`app/dashboard/page.tsx`) and a JSON API route (`app/api/me`), both via the server-side `forte.projects.getUser`.
-- Read and update `customMetadataAttributes` on the signed-in user through an authenticated mutation route (`app/api/me/attributes`).
+- Sign users up and in with a password or a one-time code, from the browser.
+- Read the signed-in user from the `X-Forte-User-Id` header the Forte gateway sets.
+- Load the user record two ways: in a Server Component (`app/dashboard/page.tsx`) and from a JSON
+  route (`app/api/me`), both with the server-side `forte.projects.getUser`.
+- Update the user's `customMetadataAttributes` from an authenticated route (`app/api/me/attributes`).
 
-> This is the "one Next.js codebase, hosted as a service" shape. If you'd rather keep a static,
-> CDN-served frontend separate from your backend, see the sibling [`../nextjs-node`](../nextjs-node)
-> and [`../vite-react-node`](../vite-react-node) examples (website + service split).
+To keep the frontend as a separate website, see [`../nextjs-node`](../nextjs-node) and
+[`../vite-react-node`](../vite-react-node).
 
 ## How auth works
 
-Because this whole app is a **service**, it sits behind the Forte gateway, which authenticates every
-request and injects a trusted `X-Forte-User-Id` header (stripping any client-set `X-Forte-*` first).
-`proxy.ts` reads that header and nothing else — it never validates a token itself, and every server
-lookup uses the server-side `forte.projects.getUser({ projectId, userId })`.
+The app runs behind the Forte gateway. The gateway authenticates every request that isn't excluded,
+removes any `X-Forte-*` headers the client sent, and sets `X-Forte-User-Id`. Server code reads that
+header and never checks a token itself.
 
-The one wrinkle for a single-origin app: page navigations (Server Components) can't carry a Bearer
-header, so the gateway authenticates them from a **cookie**. Login happens browser-direct to Forte and
-returns a session token; `app/api/auth/session` then stores it as a first-party, httpOnly
-`Forte-User-Session-Token` cookie on the service's own origin — the name the gateway recognizes. Every
-following request carries it, the gateway authenticates it and injects `X-Forte-User-Id`, and
-`proxy.ts` reads that. (This is the server-side equivalent of the SDK's reserved `/_forte` path, done
-by hand so the flow is identical locally and in production.)
+Page navigations can't carry an `Authorization` header, so the gateway authenticates them from a
+cookie. The browser signs in with Forte directly and gets a session token. `app/api/auth/session`
+stores it as an httpOnly `Forte-User-Session-Token` cookie on the app's origin, which is the cookie
+name the gateway reads. Every later request sends the cookie.
+
+Signed-out requests to an authenticated route get a 401 from the gateway and never reach the app.
+That's why `/` and `/login` are excluded from authentication and the login page sends signed-in users
+on to the dashboard. `proxy.ts` (Next.js 16 middleware) only matters when you run `next dev` with
+nothing in front of it.
+
+Sign-up registers the user, emails a verification code, and signs in with the password once the
+email is verified. One-time-code sign-in works for existing accounts. If the project requires MFA,
+the login page shows an error; see [MFA](https://forteplatforms.com/docs/core-concepts/users/mfa)
+for the extra step.
 
 ## Run locally
 
-The app only works behind the gateway — nothing else sets `X-Forte-User-Id` — so locally you run
-**`forte proxy`** in front of `next dev`. The proxy authenticates each request against Forte and
-forwards it with the `X-Forte-User-Id` header, exactly like production. Create the service first (see
-**Deploy to Forte**): that both gives the proxy a service to authenticate against and configures the
-auth exclusions it applies locally.
+The app needs `X-Forte-User-Id`, so locally you run `forte proxy` in front of `next dev`. The proxy
+authenticates each request against Forte, applies the service's auth exclusions, and sets the same
+header. Deploy the service first (see [Deploy](#deploy)) so the proxy has a service and exclusions to
+work with.
 
 ```bash
 bun install
-cp .env.example .env.local   # fill in FORTE_PROJECT_ID and FORTE_API_TOKEN
-bun dev                      # Next.js dev server on http://localhost:3000
+cp .env.example .env.local   # set FORTE_PROJECT_ID and FORTE_API_TOKEN
+bun dev                      # Next.js on http://localhost:3000
+```
 
-# in a second terminal — the gateway stand-in, listening on http://localhost:8080
+In a second terminal, start the proxy on `:8080`:
+
+```bash
 forte proxy --project-id <projectId> --service-id <serviceId> -p 3000
 ```
 
-Open <http://localhost:8080/login>, sign up with either tab, and you'll land on the dashboard. Get
-`FORTE_PROJECT_ID` and `FORTE_API_TOKEN` from the Forte dashboard (Project → API tokens).
+Open <http://localhost:8080> and sign up. Get `FORTE_PROJECT_ID` and `FORTE_API_TOKEN` from the
+Forte console (Project → API tokens).
 
-> Browse straight to `/login` — a gated route like `/dashboard` returns 401 while you're signed out,
-> because the gateway rejects it before it reaches the app. That's normal Forte service behavior.
+## Deploy
 
-## Deploy to Forte
+Deploy this folder as a service. A website would get no `FORTE_API_TOKEN`, no `X-Forte-User-Id`,
+and no request logs. `FORTE_API_TOKEN` and `FORTE_PROJECT_ID` are set automatically.
 
-Deploy this directory as a **service** (not a website — a website gets no `FORTE_API_TOKEN`, no
-`X-Forte-User-Id`, and no request logs). `FORTE_API_TOKEN` and `FORTE_PROJECT_ID` are injected
-automatically.
+The path below assumes this folder is at `nextjs-service/` in your repository.
 
 ```bash
 forte services create <projectId> \
   --name my-nextjs-app \
   --repo <githubHttpsUrl> --branch main \
-  --base-directory examples/nextjs-service \
-  --auth-exclude /login \
-  --auth-exclude '/api/auth/**' \
-  --auth-exclude /api/config
+  --base-dir nextjs-service
 ```
 
-The `--auth-exclude` paths let the login page, the session/logout routes, and the public config route
-be reached without a signed-in user. Every other route requires auth, so the gateway injects
-`X-Forte-User-Id` — which is what `proxy.ts` reads. These same exclusions are what `forte proxy`
-applies during local development.
+Then set the routes that skip authentication. Exclusions are set with `update`; `create` ignores
+them.
 
-## How Forte is wired in
+```bash
+forte services update <projectId> <serviceId> \
+  --auth-exclude / \
+  --auth-exclude /login \
+  --auth-exclude '/api/auth/**' \
+  --auth-exclude /api/config \
+  --auth-exclude '/_next/static/**' \
+  --auth-exclude /favicon.ico
+```
 
-A short tour of the touchpoints:
+| Exclusion | Why |
+|---|---|
+| `/`, `/login` | Signed-out visitors need to reach the login page. |
+| `/api/auth/**` | Saving the session cookie and logging out. |
+| `/api/config` | The login page reads the project ID before anyone is signed in. |
+| `/_next/static/**`, `/favicon.ico` | The login page's scripts, styles, and icon. |
+
+Excluded routes never get `X-Forte-User-Id`, even for a signed-in user, so don't call
+`getCurrentUser()` from them. `forte proxy` applies the same exclusions locally.
+
+## Files
 
 | File | What it shows |
 |------|---------------|
-| `app/login/page.tsx` | The SDK in the browser. `new ForteClient()` (no token), then `users.registerUser` / `users.passwordLogin` / `users.createOtpLogin` / `users.completeOtpLogin`. |
-| `app/api/auth/session/route.ts` | Stores the login session token as a first-party, httpOnly `Forte-User-Session-Token` cookie so the gateway (and `forte proxy` locally) authenticates subsequent requests. |
-| `proxy.ts` | The auth gate (Next.js 16 middleware). Reads the `X-Forte-User-Id` header the gateway injects and forwards the resolved user ID to handlers via `x-app-user-id`. |
-| `lib/forte.ts` | A single server-side `ForteClient` (it auto-reads `FORTE_API_TOKEN` from the environment), plus a `getCurrentUser()` helper for Server Components. |
-| `app/dashboard/page.tsx` | Server Component. Calls `projects.getUser` with the auto-provisioned API token to render the user record. |
-| `app/api/me/route.ts` | Same lookup, exposed as JSON. Used by `ApiRouteDemo.tsx` to demonstrate the client-fetched pattern. |
-| `app/api/me/attributes/route.ts` | Authenticated mutation: merges a patch into existing `customMetadataAttributes` and calls `projects.putUserCustomAttributes`. |
-| `app/api/auth/logout/route.ts` | Calls `users.logout` against Forte and clears the session cookie. |
+| `app/login/page.tsx` | Sign-up with email verification, password sign-in, and one-time-code sign-in, from the browser. |
+| `app/api/auth/session/route.ts` | Stores the session token as the httpOnly `Forte-User-Session-Token` cookie. |
+| `lib/forte.ts` | The server-side `ForteClient` (reads `FORTE_API_TOKEN`) and `getCurrentUser()`, which reads `X-Forte-User-Id`. |
+| `proxy.ts` | Redirects to `/login` when `X-Forte-User-Id` is missing, which only happens without the gateway in front. |
+| `app/dashboard/page.tsx` | Server Component that loads the user with `projects.getUser`. |
+| `app/api/me/route.ts` | The same lookup as JSON, used by `ApiRouteDemo.tsx`. |
+| `app/api/me/attributes/route.ts` | Accepts only known preference keys, merges them into `customMetadataAttributes`, and calls `projects.putUserCustomAttributes`. |
+| `app/api/auth/logout/route.ts` | Calls `users.logout`, clears the cookie, and redirects to `/login`. |
 
-## Why this shape?
+## Notes on the design
 
-- **Browser-direct SDK calls for login.** The clearest demonstration of the SDK is the one that's visible in the network tab. Anything sensitive (the API token, the project ID) stays on the server.
-- **Middleware-based auth.** Forte authenticates every request at the gateway, so the middleware just trusts the `X-Forte-User-Id` header it receives — re-validating a token on every request would only add latency. Locally, `forte proxy` reproduces that gateway behavior.
-- **Two backend lookup styles.** Server Components are the default in Next.js 16 and give you per-request data with no client-side fetching. API routes are still useful when you need to refresh data without a navigation. The example shows both so you can pick the one that fits your screen.
+- **Login runs in the browser.** The SDK calls are visible in the network tab. The project ID
+  comes from `/api/config`; it's public. `FORTE_API_TOKEN` stays on the server.
+- **No token checks in the app.** The gateway has already authenticated the request, so the app
+  reads `X-Forte-User-Id` and does nothing else.
+- **Preferences are allowlisted.** The attributes route accepts `favoriteColor` and `theme` only.
+  Writing arbitrary keys from the browser would let users set values your app might later trust,
+  such as a plan or a role. `putUserCustomAttributes` replaces the whole map, so the route reads,
+  merges, and writes back.

@@ -1,8 +1,6 @@
-// The Forte session token returned by login. We keep it in sessionStorage and forward it to the
-// backend *service* as a Bearer token on each call. This is the simplest cross-origin transport
-// between a website and a service and makes the auth flow visible in the network tab. For a
-// production-hardened, httpOnly-cookie approach that keeps the token out of JS, see the README
-// section on first-party cookies via `/_forte`.
+// The Forte session token returned by login, kept in sessionStorage and sent to the backend
+// service as a Bearer header. It works across origins and shows up plainly in the network tab.
+// To keep the token out of JavaScript, use an httpOnly cookie instead (see the README).
 
 const KEY = "forte_session_token";
 
