@@ -74,9 +74,10 @@ through the service to show the `X-Forte-User-Id` handoff.
 - **One-time code.** `createOtpLogin` sends a code if the email has an account, and returns the same
   response either way so it can't be used to check who has signed up. New users sign up on the
   Password tab.
-- **MFA.** If the project requires MFA, login returns a pending token that the gateway rejects.
-  This example shows an error in that case. See
-  [MFA](https://forteplatforms.com/docs/core-concepts/users/mfa) for the challenge and verify steps.
+- **MFA (optional).** Turn MFA on in the console and login returns a pending token instead of a
+  session. The login page then asks for a second factor: an authenticator-app code, an emailed or
+  texted code, or a backup code. A user with no factor sets up an authenticator app first. Passkeys
+  aren't shown; see [MFA](https://forteplatforms.com/docs/core-concepts/users/mfa) for that flow.
 
 ## Preferences and notes
 
